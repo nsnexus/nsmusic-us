@@ -1,0 +1,47 @@
+import { NextResponse } from 'next/server';
+import { getRequestContext } from '@/lib/cloudflareContext';
+import { getOrder } from '@/lib/supabaseDb';
+import { requireAdmin } from '@/lib/auth';
+import { notifyMusicReady } from '@/lib/db';
+
+export const runtime = 'nodejs';
+
+// Reenvio manual do WhatsApp "música pronta"
+export async function POST(req) {
+  try {
+    let env = {};
+    try {
+      const ctx = getRequestContext();
+      if (ctx?.env) env = ctx.env;
+    } catch (e) {}
+
+    const auth = await requireAdmin(req, env);
+    if (!auth.ok) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status });
+    }
+
+    const { orderId } = await req.json();
+    if (!orderId) {
+      return NextResponse.json({ error: 'orderId é obrigatório.' }, { status: 400 });
+    }
+
+    const orderData = await getOrder(orderId, env);
+    if (!orderData) {
+      return NextResponse.json({ error: 'Pedido não encontrado.' }, { status: 404 });
+    }
+
+    if (!orderData.audioUrl) {
+      return NextResponse.json({ error: 'Pedido ainda não tem música gerada.' }, { status: 400 });
+    }
+
+    const result = await notifyMusicReady(orderId, orderData, orderId, { force: true }, env);
+
+    if (result.sent) {
+      return NextResponse.json({ success: true });
+    }
+    return NextResponse.json({ error: result.reason === 'no_phone' ? 'Pedido sem telefone.' : 'Falha ao enviar.' }, { status: 502 });
+  } catch (error) {
+    console.error('[api/admin/notify-music-ready] Erro:', error.message);
+    return NextResponse.json({ error: 'Falha ao notificar cliente.' }, { status: 500 });
+  }
+}

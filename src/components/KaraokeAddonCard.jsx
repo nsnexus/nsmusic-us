@@ -1,0 +1,587 @@
+'use client';
+
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { requestPixCharge } from '@/lib/pixCheckout';
+import PixQrCode from './PixQrCode';
+import { useWhatsappSuporte, linkWhatsapp } from '@/lib/useWhatsappSuporte';
+import { buildAudioProxySrc } from '@/lib/audioProxy';
+
+const MAX_PIX_ATTEMPTS = 3;
+const PIX_POLLING_MAX_ATTEMPTS = 150; // ~10min
+const VIDEO_POLLING_MAX_ATTEMPTS = 60; // ~4min
+
+export default function KaraokeAddonCard({ orderId, order }) {
+  const whatsappSuporte = useWhatsappSuporte();
+  const [pixInfo, setPixInfo] = useState({ qrCode: '', paymentId: '' });
+  const [loading, setLoading] = useState(false);
+  const [pixError, setPixError] = useState('');
+  const [unlocked, setUnlocked] = useState(false);
+  const [pollingTimedOut, setPollingTimedOut] = useState(false);
+  const [pixCopied, setPixCopied] = useState(false);
+
+  // Estados locais da renderização do karaokê
+  const [localKaraokeStatus, setLocalKaraokeStatus] = useState(order?.karaokeStatus || null);
+  const [localKaraokeUrl, setLocalKaraokeUrl] = useState(order?.karaokeUrl || null);
+  const [isTriggering, setIsTriggering] = useState(false);
+  const [generationError, setGenerationError] = useState('');
+
+  // Faixas disponíveis no pedido e seleção do cliente
+  const faixas = useMemo(() => Array.isArray(order?.audioIds) ? order.audioIds : [], [order?.audioIds]);
+  const arquivosFaixas = useMemo(() => {
+    if (!Array.isArray(order?.audioFiles)) return order?.audioUrl ? [order.audioUrl] : [];
+    return order.audioFiles.map(f => typeof f === 'string' ? f : f?.url).filter(Boolean);
+  }, [order?.audioFiles, order?.audioUrl]);
+  const temEscolha = arquivosFaixas.length > 1;
+  const [faixaEscolhida, setFaixaEscolhida] = useState(() => {
+    if (order?.karaokeChosenTrackIndex !== undefined && order?.karaokeChosenTrackIndex !== null) {
+      return Number(order.karaokeChosenTrackIndex) || 0;
+    }
+    return 0;
+  });
+
+  useEffect(() => {
+    if (order?.karaokeUrl && order.karaokeUrl !== localKaraokeUrl) {
+      setLocalKaraokeUrl(order.karaokeUrl);
+    }
+    if (order?.karaokeStatus && order.karaokeStatus !== localKaraokeStatus) {
+      setLocalKaraokeStatus(order.karaokeStatus);
+    }
+  }, [order?.karaokeUrl, order?.karaokeStatus, localKaraokeUrl, localKaraokeStatus]);
+
+  const hasAccess = unlocked || order?.hasKaraokeAccess || order?.karaokeAddonPaid;
+  const currentKaraokeStatus = localKaraokeStatus || order?.karaokeStatus;
+  const currentKaraokeUrl = localKaraokeUrl || order?.karaokeUrl;
+
+  const handleGeneratePix = async () => {
+    if (!orderId) return;
+    setPixError('');
+    setLoading(true);
+
+    if (temEscolha && arquivosFaixas[faixaEscolhida]) {
+      try {
+        await fetch('/api/karaoke/choose-track', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            orderId,
+            trackIndex: faixaEscolhida,
+            audioUrl: arquivosFaixas[faixaEscolhida],
+            audioId: faixas[faixaEscolhida] || null,
+          }),
+        });
+      } catch (e) {
+        console.warn('[KaraokeAddonCard] Falha ao salvar faixa escolhida:', e?.message);
+      }
+    }
+
+    const resultado = await requestPixCharge(
+      { orderId, sku: 'karaoke_addon', isSecondaryPayment: true },
+      { attempts: MAX_PIX_ATTEMPTS }
+    );
+
+    setLoading(false);
+    if (resultado.ok) {
+      setPixInfo({ qrCode: resultado.data.qrCode || '', paymentId: resultado.data.paymentId || '' });
+    } else {
+      setPixError(resultado.error);
+    }
+  };
+
+  // Polling do pagamento PIX
+  useEffect(() => {
+    if (!orderId || !pixInfo.paymentId || hasAccess) return;
+
+    setPollingTimedOut(false);
+    let attempts = 0;
+    const interval = setInterval(async () => {
+      attempts += 1;
+      if (attempts >= PIX_POLLING_MAX_ATTEMPTS) {
+        clearInterval(interval);
+        setPollingTimedOut(true);
+        return;
+      }
+      try {
+        const res = await fetch(`/api/payments/status?orderId=${orderId}&paymentId=${pixInfo.paymentId}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === 'approved' || data.status === 'PAGO' || data.status === 'PAGAMENTO_APROVADO') {
+            setUnlocked(true);
+            clearInterval(interval);
+          }
+        }
+      } catch (e) {
+        console.warn('[KaraokeAddonCard] Erro ao consultar status do PIX:', e?.message);
+      }
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [orderId, pixInfo.paymentId, hasAccess]);
+
+  // Função para acionar a renderização do karaokê na VPS com a faixa escolhida
+  const handleTriggerGeneration = useCallback(async (chosenIdx = faixaEscolhida) => {
+    if (!orderId || isTriggering) return;
+    setIsTriggering(true);
+    setGenerationError('');
+
+    try {
+      const targetAudioUrl = arquivosFaixas[chosenIdx] || arquivosFaixas[faixaEscolhida] || null;
+      const targetAudioId = faixas[chosenIdx] || faixas[faixaEscolhida] || null;
+
+      const res = await fetch('/api/karaoke/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderId,
+          trackIndex: chosenIdx,
+          audioUrl: targetAudioUrl,
+          audioId: targetAudioId,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        setLocalKaraokeStatus('GERANDO');
+      } else {
+        setGenerationError(data.error || 'Não foi possível iniciar a geração do vídeo karaokê.');
+      }
+    } catch (e) {
+      setGenerationError(e?.message || 'Erro de conexão ao solicitar o karaokê.');
+    } finally {
+      setIsTriggering(false);
+    }
+  }, [orderId, isTriggering, faixaEscolhida, arquivosFaixas, faixas]);
+
+  // Polling da geração do vídeo na VPS (quando status === 'GERANDO')
+  useEffect(() => {
+    if (!hasAccess || currentKaraokeUrl || currentKaraokeStatus !== 'GERANDO') return;
+
+    let attempts = 0;
+    const interval = setInterval(async () => {
+      attempts += 1;
+      if (attempts >= VIDEO_POLLING_MAX_ATTEMPTS) {
+        clearInterval(interval);
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/orders/${orderId}`, { cache: 'no-store' });
+        if (res.ok) {
+          const data = await res.json();
+          const freshOrder = data?.order || data;
+          if (freshOrder?.karaokeUrl) {
+            setLocalKaraokeUrl(freshOrder.karaokeUrl);
+            setLocalKaraokeStatus('CONCLUIDO');
+            clearInterval(interval);
+          } else if (freshOrder?.karaokeStatus === 'ERRO') {
+            setLocalKaraokeStatus('ERRO');
+            setGenerationError(freshOrder.karaokeError || 'Falha na renderização do karaokê.');
+            clearInterval(interval);
+          }
+        }
+      } catch (e) {
+        console.warn('[KaraokeAddonCard] Polling de vídeo falhou:', e?.message);
+      }
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [hasAccess, currentKaraokeUrl, currentKaraokeStatus, orderId]);
+
+  return (
+    <div style={{
+      background: '#ffffff',
+      border: '1.5px solid #e2e8f0',
+      borderRadius: '20px',
+      padding: '24px',
+      marginTop: '16px',
+      boxShadow: '0 4px 20px -2px rgba(0, 0, 0, 0.05)',
+      position: 'relative',
+      overflow: 'hidden',
+      color: '#0f172a'
+    }}>
+      {/* Badge Superior */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '1.8rem' }}>🎤</span>
+          <div>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
+              Vídeo Karaokê Widescreen
+            </h3>
+            <p style={{ fontSize: '0.85rem', color: '#7c3aed', margin: '2px 0 0 0', fontWeight: '600' }}>
+              Playback instrumental + Letra sincronizada na TV
+            </p>
+          </div>
+        </div>
+        <span style={{
+          backgroundColor: '#f5f3ff',
+          color: '#7c3aed',
+          border: '1px solid #ddd6fe',
+          padding: '4px 10px',
+          borderRadius: '20px',
+          fontSize: '0.75rem',
+          fontWeight: '700',
+          textTransform: 'uppercase',
+          letterSpacing: '0.5px'
+        }}>
+          Full HD 1080p • 16:9
+        </span>
+      </div>
+
+      {!hasAccess ? (
+        // Estado: Oferta de Compra (Não Pago)
+        <div>
+          <p style={{ fontSize: '0.92rem', color: '#475569', lineHeight: '1.6', marginBottom: '18px' }}>
+            Transforme a música da sua homenagem em um <strong>show de karaokê na Smart TV</strong>! 
+            Removemos a voz da música (mantendo o instrumental original impecável) e colocamos a letra sincronizada na tela 
+            com as palavras acendendo no segundo exato de cantar.
+          </p>
+
+          {temEscolha && (
+            <div style={{ marginBottom: '16px', textAlign: 'left' }}>
+              <p style={{ fontSize: '0.88rem', fontWeight: '700', marginBottom: '8px', color: '#0f172a' }}>
+                Qual versão da música você quer transformar em Karaokê?
+              </p>
+              {arquivosFaixas.map((audioSrc, i) => (
+                <label
+                  key={i}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px',
+                    padding: '10px 14px',
+                    borderRadius: '10px',
+                    border: `1.5px solid ${faixaEscolhida === i ? '#7c3aed' : '#e2e8f0'}`,
+                    backgroundColor: faixaEscolhida === i ? '#faf5ff' : '#f8fafc',
+                    marginBottom: '8px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <input
+                      type="radio"
+                      name="karaoke-faixa-unpaid"
+                      checked={faixaEscolhida === i}
+                      onChange={() => setFaixaEscolhida(i)}
+                    />
+                    <span style={{ fontSize: '0.9rem', fontWeight: '600', color: '#0f172a' }}>
+                      Versão {i + 1}
+                    </span>
+                  </div>
+                  {audioSrc && (
+                    <audio controls src={buildAudioProxySrc(audioSrc)} style={{ width: '100%', height: '36px' }} />
+                  )}
+                </label>
+              ))}
+            </div>
+          )}
+
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            background: '#f8fafc',
+            borderRadius: '14px',
+            padding: '16px',
+            marginBottom: '18px',
+            border: '1.5px solid #e2e8f0',
+            flexWrap: 'wrap',
+            gap: '12px'
+          }}>
+            <div>
+              <div style={{ fontSize: '0.8rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: '700' }}>Valor único promocional</div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+                <span style={{ fontSize: '1.6rem', fontWeight: '800', color: '#059669' }}>R$ 9,90</span>
+                <span style={{ fontSize: '0.85rem', color: '#94a3b8', textDecoration: 'line-through' }}>R$ 29,90</span>
+              </div>
+            </div>
+
+            {!pixInfo.qrCode && (
+              <button
+                type="button"
+                onClick={handleGeneratePix}
+                disabled={loading}
+                className="btn btn-primary"
+                style={{
+                  background: 'linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%)',
+                  color: '#fff',
+                  border: 'none',
+                  padding: '12px 24px',
+                  borderRadius: '12px',
+                  fontWeight: '700',
+                  fontSize: '0.95rem',
+                  cursor: loading ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  boxShadow: '0 4px 14px rgba(124, 58, 237, 0.3)'
+                }}
+              >
+                {loading ? 'Gerando PIX...' : '🎤 Quero o Vídeo Karaokê'}
+              </button>
+            )}
+          </div>
+
+          {pixError && (
+            <div style={{ color: '#ef4444', fontSize: '0.85rem', marginBottom: '12px', textAlign: 'center' }}>
+              ⚠️ {pixError}
+            </div>
+          )}
+
+          {/* Card com o QR Code do PIX */}
+          {pixInfo.qrCode && (
+            <div style={{
+              background: '#f8fafc',
+              borderRadius: '16px',
+              padding: '20px',
+              border: '1.5px solid #e2e8f0',
+              textAlign: 'center'
+            }}>
+              <h4 style={{ color: '#0f172a', fontSize: '1.05rem', fontWeight: '800', marginBottom: '8px' }}>
+                Pague R$ 9,90 via PIX para liberar seu Karaokê
+              </h4>
+              <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: '16px' }}>
+                Assim que você pagar, a equipe inicia a produção manual do seu vídeo karaokê.
+              </p>
+
+              <PixQrCode
+                qrCodeText={pixInfo.qrCode}
+                size={200}
+                onCopied={() => setPixCopied(true)}
+                copied={pixCopied}
+                style={{ marginBottom: '16px' }}
+              />
+
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(pixInfo.qrCode);
+                    setPixCopied(true);
+                    setTimeout(() => setPixCopied(false), 3000);
+                  }}
+                  className="btn btn-secondary"
+                  style={{ fontSize: '0.85rem', padding: '8px 16px' }}
+                >
+                  {pixCopied ? '✅ Código PIX Copiado!' : '📋 Copiar Código PIX'}
+                </button>
+              </div>
+
+              {pollingTimedOut && (
+                <div style={{ marginTop: '16px', color: '#f59e0b', fontSize: '0.85rem' }}>
+                  Ainda não detectamos o pagamento. Já pagou?{' '}
+                  <a
+                    href={linkWhatsapp(whatsappSuporte, `Olá! Paguei o Vídeo Karaokê do pedido ${orderId} mas ainda não atualizou.`)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: '#38bdf8', textDecoration: 'underline' }}
+                  >
+                    Falar com o suporte no WhatsApp
+                  </a>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      ) : (
+        // Estado: Recurso Liberado (Pago com Sucesso)
+        <div>
+          {currentKaraokeUrl ? (
+            // Vídeo Pronto
+            <div>
+              <div style={{
+                position: 'relative',
+                borderRadius: '14px',
+                overflow: 'hidden',
+                background: '#000',
+                marginBottom: '16px',
+                aspectRatio: '16/9',
+                boxShadow: '0 8px 25px rgba(0, 0, 0, 0.5)'
+              }}>
+                <video
+                  src={currentKaraokeUrl}
+                  poster={order?.coverUrl || undefined}
+                  controls
+                  playsInline
+                  style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                <a
+                  href={currentKaraokeUrl}
+                  download={`karaoke_${orderId}.mp4`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn btn-primary"
+                  style={{
+                    flex: '1',
+                    minWidth: '200px',
+                    padding: '12px 20px',
+                    textAlign: 'center',
+                    background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                    color: '#fff',
+                    borderRadius: '12px',
+                    fontWeight: '700',
+                    fontSize: '0.95rem',
+                    textDecoration: 'none',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px'
+                  }}
+                >
+                  ⬇️ Baixar Vídeo Karaokê (Full HD)
+                </a>
+
+                <a
+                  href={`https://api.whatsapp.com/send?text=${encodeURIComponent(`Olha esse vídeo karaokê da nossa música personalizada! 🎤✨ ${currentKaraokeUrl}`)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn btn-secondary"
+                  style={{
+                    padding: '12px 20px',
+                    borderRadius: '12px',
+                    fontSize: '0.95rem',
+                    fontWeight: '600',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px'
+                  }}
+                >
+                  📲 Compartilhar no WhatsApp
+                </a>
+              </div>
+            </div>
+          ) : currentKaraokeStatus === 'GERANDO' ? (
+            // Vídeo em Processamento
+            <div style={{
+              textAlign: 'center',
+              padding: '30px 20px',
+              background: 'rgba(0, 0, 0, 0.3)',
+              borderRadius: '16px',
+              border: '1px dashed rgba(168, 85, 247, 0.4)'
+            }}>
+              <div style={{ fontSize: '2.5rem', marginBottom: '12px', animation: 'pulse 1.5s infinite' }}>
+                🎬
+              </div>
+              <h4 style={{ color: '#fff', fontSize: '1.1rem', fontWeight: '700', marginBottom: '8px' }}>
+                Criando o seu Vídeo Karaokê...
+              </h4>
+              <p style={{ color: '#cbd5e1', fontSize: '0.9rem', maxWidth: '450px', margin: '0 auto 16px auto', lineHeight: '1.5' }}>
+                Estamos isolando o playback instrumental, sincronizando cada palavra da letra e renderizando o vídeo em Full HD. 
+                Leva cerca de 1 a 2 minutos. Esta página atualiza sozinha!
+              </p>
+              <div style={{
+                width: '180px',
+                height: '6px',
+                background: 'rgba(255, 255, 255, 0.1)',
+                borderRadius: '3px',
+                margin: '0 auto',
+                overflow: 'hidden'
+              }}>
+                <div style={{
+                  width: '60%',
+                  height: '100%',
+                  background: 'linear-gradient(90deg, #9333ea, #38bdf8)',
+                  borderRadius: '3px',
+                  animation: 'shimmer 2s infinite'
+                }} />
+              </div>
+            </div>
+          ) : (
+            // Acesso liberado, aguardando o cliente escolher a versão e iniciar
+            <div style={{ textAlign: 'center', padding: '10px 0' }}>
+              <div style={{ display: 'inline-block', background: '#ecfdf5', border: '1px solid #10b981', borderRadius: '20px', padding: '4px 14px', fontSize: '0.8rem', color: '#047857', fontWeight: '700', marginBottom: '12px' }}>
+                ✅ Vídeo Karaokê Liberado!
+              </div>
+              <h4 style={{ color: '#0f172a', fontSize: '1.2rem', fontWeight: '800', marginBottom: '6px' }}>
+                Pronto para criar seu Karaokê Widescreen
+              </h4>
+              <p style={{ color: '#475569', fontSize: '0.88rem', maxWidth: '500px', margin: '0 auto 16px auto', lineHeight: '1.5' }}>
+                {temEscolha
+                  ? 'Escolha abaixo qual versão da sua música você deseja transformar em Vídeo Karaokê para cantar na Smart TV:'
+                  : 'Clique no botão abaixo para iniciar a renderização em Full HD com letra sincronizada:'}
+              </p>
+
+              {temEscolha && (
+                <div style={{ marginBottom: '20px', textAlign: 'left', maxWidth: '480px', margin: '0 auto 20px auto' }}>
+                  {arquivosFaixas.map((audioSrc, i) => (
+                    <label
+                      key={i}
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '8px',
+                        padding: '12px 14px',
+                        borderRadius: '12px',
+                        border: `1.5px solid ${faixaEscolhida === i ? '#7c3aed' : '#e2e8f0'}`,
+                        backgroundColor: faixaEscolhida === i ? '#faf5ff' : '#f8fafc',
+                        marginBottom: '10px',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <input
+                            type="radio"
+                            name="karaoke-faixa-paid"
+                            checked={faixaEscolhida === i}
+                            onChange={() => setFaixaEscolhida(i)}
+                          />
+                          <span style={{ fontSize: '0.92rem', fontWeight: '700', color: '#0f172a' }}>
+                            Versão {i + 1}
+                          </span>
+                        </div>
+                        {faixaEscolhida === i && (
+                          <span style={{ fontSize: '0.75rem', color: '#7c3aed', fontWeight: '700' }}>
+                            ✓ Selecionada
+                          </span>
+                        )}
+                      </div>
+                      {audioSrc && (
+                        <audio controls src={buildAudioProxySrc(audioSrc)} style={{ width: '100%', height: '36px' }} />
+                      )}
+                    </label>
+                  ))}
+                </div>
+              )}
+
+              {generationError && (
+                <p style={{ color: '#ef4444', fontSize: '0.85rem', marginBottom: '12px' }}>
+                  {generationError}
+                </p>
+              )}
+
+              <button
+                type="button"
+                onClick={() => handleTriggerGeneration(faixaEscolhida)}
+                disabled={isTriggering}
+                className="btn btn-primary"
+                style={{
+                  background: 'linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%)',
+                  color: '#fff',
+                  border: 'none',
+                  padding: '14px 28px',
+                  borderRadius: '12px',
+                  fontWeight: '700',
+                  fontSize: '1rem',
+                  cursor: isTriggering ? 'not-allowed' : 'pointer',
+                  boxShadow: '0 4px 15px rgba(124, 58, 237, 0.35)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                }}
+              >
+                {isTriggering
+                  ? 'Iniciando renderização...'
+                  : temEscolha
+                    ? `🎬 Gerar Vídeo Karaokê (Versão ${faixaEscolhida + 1})`
+                    : '🎬 Iniciar Geração do Karaokê Agora'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

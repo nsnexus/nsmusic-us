@@ -1,0 +1,3 @@
+import './globals.css';
+export const metadata = { title: { default: 'NS Music — Your story, in song', template: '%s | NS Music' }, description: 'Turn the little things into a personal song. Create and review your lyrics, choose your sound, and make a one-of-a-kind musical gift from $4.99 USD.', icons: { icon: '/us-mark.svg' }, openGraph: { title: 'NS Music — Your story, in song', description: 'A little story. A lasting feeling.', locale: 'en_US', type: 'website' }, robots: { index: false, follow: false } };
+export default function RootLayout({ children }) { return <html lang="en-US"><body>{children}</body></html>; }

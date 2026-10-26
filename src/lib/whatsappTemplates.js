@@ -1,0 +1,86 @@
+// resolveDeliveryUrl não depende de nada específico de servidor (ao contrário de src/lib/whatsapp.js,
+// que precisa de @cloudflare/next-on-pages) — arquivo separado só por isso, ver M-19 no AUDIT_REPORT.md.
+
+import { AUDIO_CACHE_VERSION } from './audioCacheVersion.js';
+import { resolverSiteUrl } from './siteUrl.js';
+
+function resolveSiteBaseUrl() {
+  return resolverSiteUrl(process.env.NEXT_PUBLIC_SITE_URL);
+}
+
+export function resolveDeliveryUrl(orderId) {
+  return `${resolveSiteBaseUrl()}/entrega?orderId=${orderId}`;
+}
+
+// Link do wizard já com `?new=1` — /criar já sabe limpar o rascunho salvo no localStorage do
+// navegador quando essa query chega (ver src/app/criar/page.jsx, useEffect de restauração). Pedido
+// 18/09/2026: cliente que manda "novo pedido" de novo no WhatsApp às vezes reabre o wizard com o
+// RASCUNHO ANTIGO restaurado (outro pedido, outra letra, step avançado) em vez de começar do zero —
+// esse link força o começo limpo sem o cliente precisar saber o que é "limpar cache".
+export function resolveCriarUrl() {
+  return `${resolveSiteBaseUrl()}/criar?new=1`;
+}
+
+// AUDIT_VERSION=2, achado 31/08/2026: o link de áudio mandado direto no WhatsApp (pagamento
+// aprovado / "cadê minha música") era a URL CRUA da CDN da Kie.ai/tempfile — o próprio arquivo mp3
+// externo, sem passar pelo nosso /api/audio/proxy. No navegador do celular isso geralmente nem toca
+// nem baixa (o app de WhatsApp abre uma aba em branco, sem player nem download automático), e ainda
+// herdava os mesmos problemas de CDN que o proxy já existe pra contornar (403/corpo vazio,
+// candidatos alternativos — ver src/app/api/audio/proxy/route.js). Passando pelo proxy com
+// `?download=`, o link abre com Content-Disposition: attachment — no celular isso já dispara o
+// download direto ao tocar no link, sem precisar de player.
+export function buildAudioDownloadLink(rawUrl, filename) {
+  if (!rawUrl) return '';
+  // Já é um link do nosso próprio proxy (ex: URL arquivada em Firebase Storage e reconstruída por
+  // outro ponto de chamada) — não precisa envelopar de novo.
+  if (rawUrl.startsWith('/api/audio/proxy') || rawUrl.includes('/api/audio/proxy?')) return rawUrl;
+  const safeFilename = (filename || 'musica.mp3').replace(/[^\w.\- ]/g, '_').slice(0, 120) || 'musica.mp3';
+  return `${resolveSiteBaseUrl()}/api/audio/proxy?url=${encodeURIComponent(rawUrl)}&download=${encodeURIComponent(safeFilename)}&v=${AUDIO_CACHE_VERSION}`;
+}
+
+/**
+ * Limpa um identificador de telefone/LID vindo do WhatsApp preservando o sufixo "@lid" quando
+ * presente (ver route.js:extractSenderPhone, achado 28/08/2026) — usado tanto pra montar a chave de
+ * sessão do agente (src/lib/whatsappAgent.js) quanto antes de mandar pra formatToWhatsAppNumber.
+ * Sem isso, `String(id).replace(/\D/g,'')` (limpeza ingênua) descarta as letras de "@lid" junto do
+ * resto da pontuação e devolve um dígito solto que a W-API aceita mas nunca entrega.
+ */
+export function cleanWhatsAppId(raw) {
+  if (!raw) return '';
+  const str = String(raw);
+  const isLid = str.includes('@lid');
+  const digits = str.replace(/\D/g, '');
+  if (!digits) return '';
+  return isLid ? `${digits}@lid` : digits;
+}
+
+/**
+ * Formata um telefone brasileiro para o formato internacional 55+DDD+Número.
+ */
+export const formatToWhatsAppNumber = (phone) => {
+  if (!phone) return '';
+
+  // LID (identificador de privacidade do WhatsApp — ver route.js:extractSenderPhone, achado
+  // 28/08/2026): não é telefone, então nenhuma das regras de DDI/9º dígito abaixo se aplica. A W-API
+  // só entrega a mensagem pro LID se o sufixo "@lid" for mantido — dígito solto é aceito pela API
+  // (200) mas não entrega em lugar nenhum.
+  if (String(phone).includes('@lid')) {
+    const digits = String(phone).replace(/\D/g, '');
+    return digits ? `${digits}@lid` : '';
+  }
+
+  let clean = phone.replace(/\D/g, '');
+  if (!clean) return '';
+
+  // Se já começar com 55 e tiver 12 ou 13 dígitos
+  if (clean.startsWith('55') && (clean.length === 12 || clean.length === 13)) {
+    return clean;
+  }
+
+  // Se for DDD + 8 ou 9 dígitos (ex: 94991064040 ou 9491064040)
+  if (clean.length === 10 || clean.length === 11) {
+    return `55${clean}`;
+  }
+
+  return clean;
+};

@@ -1,0 +1,2427 @@
+'use client';
+
+import React, { useState, useEffect, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
+import { auth, onAuthStateChanged, signOut } from '@/lib/authClient';
+import { lerConfigSite, normalizarNumeroWhatsapp, WHATSAPP_SUPORTE_PADRAO } from '@/lib/configSite';
+import { getUsPackage } from '@/lib/usCatalog';
+import { buildSunoPayload } from '@/lib/sunoPayload';
+import FaturamentoCards from '@/components/FaturamentoCards';
+import LimitesCota from '@/components/admin/LimitesCota';
+import KieCreditsBadge from '@/components/admin/KieCreditsBadge';
+import UnificallyCreditsBadge from '@/components/admin/UnificallyCreditsBadge';
+import WhatsAppUsageBadge from '@/components/admin/WhatsAppUsageBadge';
+import PlatformIcon from '@/components/admin/PlatformIcon';
+import { getOrderPlatform, PLATFORMS } from '@/lib/trafficSource';
+import { formatToWhatsAppNumber } from '@/lib/whatsappTemplates';
+import { hasPreviewTrackingData } from '@/lib/previewTracking';
+import Link from 'next/link';
+import Image from 'next/image';
+import TabelaTimbresClientes from '@/components/admin/TabelaTimbresClientes';
+import AbaFinanceiro from '@/components/admin/AbaFinanceiro';
+import AbaRemixCover from '@/components/admin/AbaRemixCover';
+import AbaContas from '@/components/admin/AbaContas';
+import FunilStatusCards from '@/components/admin/FunilStatusCards';
+import { hasOrderGeneratedPix } from '@/lib/pixCheckout';
+import { isStripePayment } from '@/lib/paymentFees';
+
+const getSavedAdminFilter = (key, fallback) => {
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const val = sessionStorage.getItem(`ns_admin_${key}`);
+    return val !== null ? JSON.parse(val) : fallback;
+  } catch (e) {
+    return fallback;
+  }
+};
+
+export default function AdminDashboard() {
+  const [user, setUser] = useState(null);
+  const [checkingAuth, setCheckingAuth] = useState(true);
+  const [orders, setOrders] = useState([]);
+  const [loadingOrders, setLoadingOrders] = useState(true);
+
+  // Padrão "hoje" — reduz leituras do Firestore no carregamento inicial (ver where() na query de orders).
+  const todayLocalStr = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+
+  const [filter, setFilter] = useState(() => getSavedAdminFilter('filter', 'ALL')); // 'ALL', 'NEW', 'PRODUCTION', 'FINISHED'
+  const [purchaseTypeTab, setPurchaseTypeTab] = useState(() => getSavedAdminFilter('purchaseTypeTab', 'ALL')); // 'ALL', 'MUSIC', 'VIDEO'
+  const [dateFrom, setDateFrom] = useState(() => getSavedAdminFilter('dateFrom', todayLocalStr()));
+  const [dateTo, setDateTo] = useState(() => getSavedAdminFilter('dateTo', ''));
+  const [searchQuery, setSearchQuery] = useState(() => getSavedAdminFilter('searchQuery', ''));
+  const [debouncedSearch, setDebouncedSearch] = useState(() => getSavedAdminFilter('searchQuery', ''));
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchQuery), 350);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState(() => getSavedAdminFilter('paymentStatusFilter', 'ALL'));
+  const [productionStatusFilter, setProductionStatusFilter] = useState(() => getSavedAdminFilter('productionStatusFilter', 'ALL'));
+  const [providerFilter, setProviderFilter] = useState(() => getSavedAdminFilter('providerFilter', 'ALL'));
+  const [sortBy, setSortBy] = useState(() => getSavedAdminFilter('sortBy', 'createdAt_desc')); // 'createdAt_desc'|'createdAt_asc'|'paidAt_desc'|'paidAt_asc'
+
+  // Controle de auto-atualização em tempo real e renovação de token
+  const [reloadTrigger, setReloadTrigger] = useState(0);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState(() => new Date());
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Linhas da tabela com o detalhamento de produtos (Valor) expandido — ver getOrderProductBreakdown.
+  const [expandedValueRows, setExpandedValueRows] = useState(() => new Set());
+  const toggleValueExpanded = (orderId) => {
+    setExpandedValueRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(orderId)) next.delete(orderId); else next.add(orderId);
+      return next;
+    });
+  };
+
+  // Controle Master do Agente de IA do WhatsApp
+  const [agentEnabled, setAgentEnabled] = useState(true);
+  const [togglingAgent, setTogglingAgent] = useState(false);
+
+  // Paginação — carrega 500 de início para cobrir o histórico típico do admin.
+  // "Carregar todos" remove o limite completamente (útil para busca/filtro em toda a base).
+  const PAGE_SIZE = 200;
+  const [pageSize, setPageSize] = useState(500);
+  const [loadAll, setLoadAll] = useState(false);
+  const [hasMoreOrders, setHasMoreOrders] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  
+  // Exclusão em massa
+  const [selectedOrderIds, setSelectedOrderIds] = useState([]);
+  const [deletingOrders, setDeletingOrders] = useState(false);
+
+  // 'ORDERS' | 'CONTAS' | 'STUCK' | 'LIMITES' | 'AJUSTES' | 'FINANCEIRO' | 'TIMBRES' | 'REMIX'
+  const [activeTab, setActiveTab] = useState(() => { const saved = getSavedAdminFilter('activeTab', 'ORDERS'); return ['TIMBRES', 'STUCK'].includes(saved) ? 'ORDERS' : saved; });
+
+  // Salva os filtros no sessionStorage para preservá-los ao navegar para um pedido e voltar
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      sessionStorage.setItem('ns_admin_filter', JSON.stringify(filter));
+      sessionStorage.setItem('ns_admin_purchaseTypeTab', JSON.stringify(purchaseTypeTab));
+      sessionStorage.setItem('ns_admin_dateFrom', JSON.stringify(dateFrom));
+      sessionStorage.setItem('ns_admin_dateTo', JSON.stringify(dateTo));
+      sessionStorage.setItem('ns_admin_searchQuery', JSON.stringify(searchQuery));
+      sessionStorage.setItem('ns_admin_paymentStatusFilter', JSON.stringify(paymentStatusFilter));
+      sessionStorage.setItem('ns_admin_productionStatusFilter', JSON.stringify(productionStatusFilter));
+      sessionStorage.setItem('ns_admin_providerFilter', JSON.stringify(providerFilter));
+      sessionStorage.setItem('ns_admin_sortBy', JSON.stringify(sortBy));
+      sessionStorage.setItem('ns_admin_activeTab', JSON.stringify(activeTab));
+    } catch (e) {}
+  }, [filter, purchaseTypeTab, dateFrom, dateTo, searchQuery, paymentStatusFilter, productionStatusFilter, providerFilter, sortBy, activeTab]);
+
+  // Número de WhatsApp do suporte, editável aqui em vez de hardcoded no código (pedido 21/09/2026:
+  // o número principal foi suspenso e o dono vai alternar de volta em dois dias — trocar isso não
+  // pode exigir deploy). Ver src/lib/configSite.js.
+  // Diagnóstico do webhook da Efí — a via instantânea de confirmação de pagamento. Ver
+  // src/app/api/admin/efi-webhook/route.js.
+
+  const [numeroSuporte, setNumeroSuporte] = useState('');
+  const [salvandoNumero, setSalvandoNumero] = useState(false);
+  const [msgNumero, setMsgNumero] = useState('');
+
+  const [sunoPrimaryProvider, setSunoPrimaryProvider] = useState('unifically');
+  const [salvandoProvider, setSalvandoProvider] = useState(false);
+  const [msgProvider, setMsgProvider] = useState('');
+  const [sunoWorkerHeartbeat, setSunoWorkerHeartbeat] = useState(null);
+
+  const isWorkerOnline = useMemo(() => {
+    if (!sunoWorkerHeartbeat?.timestamp) return false;
+    const diffMs = Date.now() - new Date(sunoWorkerHeartbeat.timestamp).getTime();
+    return diffMs < 90000;
+  }, [sunoWorkerHeartbeat]);
+
+  const [testandoRobo, setTestandoRobo] = useState(false);
+  const [testeRoboStatus, setTesteRoboStatus] = useState('');
+  const [testeRoboAudioUrl, setTesteRoboAudioUrl] = useState(null);
+
+  const [contingencyMode, setContingencyMode] = useState(false);
+  const [salvandoContingencia, setSalvandoContingencia] = useState(false);
+  const [msgContingencia, setMsgContingencia] = useState('');
+
+  // Reprocessamento de pedidos travados antes da Suno (letra pronta mas geração nunca confirmada).
+  // Varredura de conferência de pagamentos (pedido 20/09/2026) — ver handleAuditPayments.
+  const [auditing, setAuditing] = useState(false);
+  const [auditResult, setAuditResult] = useState(null);
+  const [auditDias, setAuditDias] = useState(7);
+  const [auditSoCopiaram, setAuditSoCopiaram] = useState(false);
+
+  // Reenvio manual do WhatsApp "música pronta" (incidente 14-19/08/2026 — ver src/lib/db.js:notifyMusicReady).
+
+  const router = useRouter();
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (!auth.currentUser || auth.currentUser.email !== 'narcisofelizardo@gmail.com') {
+        router.push('/admin/login');
+      }
+    }, 1500);
+
+    const unsubscribe = onAuthStateChanged(auth, (authUser) => {
+      clearTimeout(timeout);
+      if (!authUser || authUser.email !== 'narcisofelizardo@gmail.com') {
+        router.push('/admin/login');
+      } else {
+        setUser(authUser);
+        setCheckingAuth(false);
+      }
+    }, (error) => {
+      clearTimeout(timeout);
+      router.push('/admin/login');
+    });
+
+    return () => {
+      clearTimeout(timeout);
+      unsubscribe();
+    };
+  }, [router]);
+
+  // O <input type="date"> devolve "AAAA-MM-DD" no calendário LOCAL do navegador (fuso do Brasil,
+  // UTC-3), mas createdAt é gravado sempre em UTC (new Date().toISOString(), convenção do projeto —
+  // ver CLAUDE.md). Comparar a string bruta do input contra createdAt tratava "AAAA-MM-DD" como se
+  // já fosse meia-noite UTC — 3 horas ANTES da meia-noite local de verdade. Resultado: filtrar "dia
+  // 12" incluía pedidos feitos às 21h do dia 11 no horário do Brasil. `new Date("...T00:00:00")` sem
+  // sufixo de fuso é interpretado como horário LOCAL pelo motor JS — é isso que corrige o deslocamento.
+  const localDayStartIso = (dateStr) => (dateStr ? new Date(`${dateStr}T00:00:00`).toISOString() : null);
+  const localDayEndIso = (dateStr) => (dateStr ? new Date(`${dateStr}T23:59:59.999`).toISOString() : null);
+
+  // Load orders — consulta via API Edge (Supabase PostgREST) com auto-renovação de sessão
+  useEffect(() => {
+    if (!user) return;
+
+    let cancelado = false;
+
+    const carregar = async () => {
+      if (orders.length === 0) {
+        setLoadingOrders(true);
+      } else {
+        setIsRefreshing(true);
+      }
+
+      try {
+        let token = await auth.currentUser?.getIdToken();
+        if (token) {
+          const params = new URLSearchParams();
+          if (debouncedSearch && debouncedSearch.trim().length >= 2) {
+            params.set('search', debouncedSearch.trim());
+          } else {
+            if (dateFrom) params.set('dateFrom', localDayStartIso(dateFrom));
+            if (dateTo) params.set('dateTo', localDayEndIso(dateTo));
+          }
+          params.set('limit', String(loadAll ? 1000 : pageSize + 1));
+
+          let res = await fetch(`/api/admin/orders?${params.toString()}`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+
+          // Se a sessão expirou (401), força renovação automática do token e repete
+          if (res.status === 401) {
+            const freshToken = await auth.currentUser?.getIdToken(true);
+            if (freshToken && freshToken !== token) {
+              token = freshToken;
+              res = await fetch(`/api/admin/orders?${params.toString()}`, {
+                headers: { Authorization: `Bearer ${freshToken}` }
+              });
+            } else {
+              console.warn('[Admin] Sessão expirada definitivamente. Redirecionando para login...');
+              await signOut(auth);
+              router.push('/admin/login');
+              return;
+            }
+          }
+
+          if (res.ok) {
+            const json = await res.json();
+            if (json?.ok && Array.isArray(json.orders)) {
+              if (cancelado) return;
+              if (loadAll) {
+                setHasMoreOrders(false);
+                setOrders(json.orders);
+              } else {
+                setHasMoreOrders(json.orders.length > pageSize);
+                setOrders(json.orders.slice(0, pageSize));
+              }
+              setLastRefreshedAt(new Date());
+              setLoadingOrders(false);
+              setIsRefreshing(false);
+              setLoadingMore(false);
+              return;
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[admin] Falha na busca de pedidos:', err.message);
+      }
+
+      if (!cancelado) {
+        setLoadingOrders(false);
+        setIsRefreshing(false);
+        setLoadingMore(false);
+      }
+    };
+
+    carregar();
+
+    return () => {
+      cancelado = true;
+    };
+  }, [user, loadAll, pageSize, dateFrom, dateTo, debouncedSearch, reloadTrigger]);
+
+  // Auto-atualização periódica (a cada 25 segundos) e ao focar na janela do painel
+  useEffect(() => {
+    if (!user) return;
+
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        setReloadTrigger((prev) => prev + 1);
+      }
+    }, 25000);
+
+    const handleFocus = () => {
+      setReloadTrigger((prev) => prev + 1);
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleFocus);
+    };
+  }, [user]);
+
+
+  // Configurações do WhatsApp (Master Switch do Agente e Suporte)
+  useEffect(() => {
+    if (!user) return;
+    let ativo = true;
+
+    fetch('/api/admin/config')
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (ativo && data) {
+          if (data.agentEnabled !== undefined) setAgentEnabled(data.agentEnabled);
+          if (data.whatsappSuporte) setNumeroSuporte(data.whatsappSuporte);
+        }
+      })
+      .catch(() => {});
+
+    return () => { ativo = false; };
+  }, [user]);
+
+  const handleToggleAgent = async () => {
+    setTogglingAgent(true);
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      const res = await fetch('/api/admin/config', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ agentEnabled: !agentEnabled })
+      });
+      if (res.ok) {
+        setAgentEnabled(!agentEnabled);
+      } else {
+        const json = await res.json().catch(() => ({}));
+        alert('Erro ao alterar status do robô: ' + (json.error || 'Erro desconhecido'));
+      }
+    } catch (err) {
+      alert('Erro ao alterar status do robô: ' + err.message);
+    } finally {
+      setTogglingAgent(false);
+    }
+  };
+
+  const handleLoadMoreOrders = () => {
+    setLoadingMore(true);
+    setPageSize(prev => prev + PAGE_SIZE);
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      router.push('/admin/login');
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Normaliza createdAt para string ISO independente do formato salvo no Firestore
+  // (string ISO, Firestore Timestamp ou número epoch).
+  const toISOStr = (createdAt) => {
+    if (!createdAt) return null;
+    if (typeof createdAt?.toDate === 'function') return createdAt.toDate().toISOString();
+    if (typeof createdAt === 'string') return createdAt;
+    if (typeof createdAt === 'number') return new Date(createdAt).toISOString();
+    return null;
+  };
+
+  const isOrderPreLyrics = (o) => {
+    if (!o) return true;
+    if (o.lyrics && o.lyrics.trim().length > 10) return false;
+    if (o.paymentStatus === 'PAGO' || o.paymentStatus === 'PAGAMENTO_APROVADO') return false;
+    if (hasOrderGeneratedPix(o)) return false;
+    const st = o.productionStatus;
+    return st === 'ETAPA_1' || st === 'ETAPA_2' || st === 'ETAPA_3' || st === 'ETAPA_4' || st === 'RASCUNHO';
+  };
+
+  const getFilteredOrders = () => {
+    let result = orders;
+
+    switch (filter) {
+      case 'NEW':
+        result = result.filter(o => o.paymentStatus === 'PAGAMENTO_APROVADO' && o.productionStatus === 'LETRA_APROVADA');
+        break;
+      case 'PRODUCTION':
+        result = result.filter(o => o.productionStatus === 'EM_PRODUCAO' || o.productionStatus === 'VERSOES_EM_PRODUCAO');
+        break;
+      case 'FINISHED':
+        result = result.filter(o => o.productionStatus === 'FINALIZADO' || o.productionStatus === 'ENTREGUE');
+        break;
+      default:
+        break;
+    }
+
+    // Combo entra nas duas abas — é venda de música E de vídeo ao mesmo tempo.
+    // "MUSIC" filtra pedidos sem add-on de vídeo; "VIDEO" filtra os que têm vídeo pago.
+    if (purchaseTypeTab === 'MUSIC') {
+      result = result.filter(o => !o.videoAddonPaid);
+    } else if (purchaseTypeTab === 'VIDEO') {
+      result = result.filter(o => o.videoAddonPaid);
+    } else if (purchaseTypeTab === 'CARD') {
+      result = result.filter(o => isStripePayment(o));
+    } else if (purchaseTypeTab === 'PIX') {
+      result = result.filter(o => {
+        const isPaid = o.paymentStatus === 'PAGAMENTO_APROVADO' || o.paymentStatus === 'PAGO' || o.paidAt || o.videoAddonPaid;
+        return isPaid && !isStripePayment(o);
+      });
+    } else if (purchaseTypeTab === 'PIX_COPIADO') {
+      // Clicou para gerar PIX ou copiou o código e ainda não consta pago
+      result = result.filter(o => {
+        const isPaid = o.paymentStatus === 'PAGAMENTO_APROVADO' || o.paymentStatus === 'PAGO';
+        return !isPaid && hasOrderGeneratedPix(o);
+      });
+    }
+
+    // Filtro de data já aconteceu na query do Firestore (where() em createdAt) — orders só chega
+    // aqui com o intervalo certo, não precisa refiltrar.
+
+    // Busca por texto: telefone, nome do cliente, homenageado ou código do pedido.
+    // String() garante que customerPhone numérico não quebre o .replace().
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      const qDigits = q.replace(/\D/g, '');
+      const qDigitsNo55 = qDigits.startsWith('55') && qDigits.length >= 12
+        ? qDigits.substring(2)
+        : (qDigits.startsWith('55') && qDigits.length >= 3 && qDigits[2] !== '9' ? qDigits.substring(2) : qDigits);
+
+      result = result.filter(o => {
+        const nameMatch = (o.customerName || '').toLowerCase().includes(q);
+        const honoreeMatch = (o.honoreeName || '').toLowerCase().includes(q);
+        const codeMatch = (o.orderNumber || o.id || '').toLowerCase().includes(q);
+        const rawPhone = String(o.customerPhone || o.customer_phone_digits || '').replace(/\D/g, '');
+        const rawPhoneNo55 = rawPhone.startsWith('55') && rawPhone.length >= 12
+          ? rawPhone.substring(2)
+          : (rawPhone.startsWith('55') && rawPhone.length >= 3 && rawPhone[2] !== '9' ? rawPhone.substring(2) : rawPhone);
+        const phoneMatch = qDigits.length >= 3 && (
+          rawPhone.includes(qDigits) ||
+          (qDigitsNo55.length >= 3 && rawPhoneNo55.includes(qDigitsNo55)) ||
+          (qDigitsNo55.length >= 3 && rawPhone.includes(qDigitsNo55)) ||
+          (qDigits.length >= 3 && rawPhoneNo55.includes(qDigits))
+        );
+        return nameMatch || honoreeMatch || codeMatch || phoneMatch;
+      });
+    }
+
+    if (paymentStatusFilter !== 'ALL') {
+      // PAGAMENTO_APROVADO e PAGO são equivalentes (ver CLAUDE.md) — filtro "Pago" cobre os dois.
+      result = result.filter(o =>
+        paymentStatusFilter === 'PAGAMENTO_APROVADO'
+          ? (o.paymentStatus === 'PAGAMENTO_APROVADO' || o.paymentStatus === 'PAGO')
+          : o.paymentStatus === paymentStatusFilter
+      );
+    }
+
+    if (productionStatusFilter === 'ALL') {
+      // Regra solicitada: não exibir pedidos das etapas preliminares (antes de gerar letra) na tabela principal, exceto se houver busca ativa por texto
+      if (!searchQuery.trim()) {
+        result = result.filter(o => !isOrderPreLyrics(o));
+      }
+    } else if (productionStatusFilter !== 'TODOS_INCLUINDO_RASCUNHOS') {
+      result = result.filter(o => o.productionStatus === productionStatusFilter);
+    }
+
+    if (providerFilter !== 'ALL') {
+      result = result.filter(o => o.sunoProvider === providerFilter);
+    }
+
+    // Ordenação — client-side porque a lista já está toda carregada em memória (evita depender de
+    // índice composto novo no Firestore só pra isso, ver .claude/rules/database.md). paidAt ausente
+    // vai sempre para o fim, em qualquer direção de ordenação.
+    const sorted = [...result];
+    const getTime = (v) => {
+      const iso = toISOStr(v);
+      return iso ? new Date(iso).getTime() : null;
+    };
+    sorted.sort((a, b) => {
+      const field = sortBy.startsWith('paidAt') ? 'paidAt' : 'createdAt';
+      const dir = sortBy.endsWith('_asc') ? 1 : -1;
+      const ta = getTime(a[field]);
+      const tb = getTime(b[field]);
+      if (ta === null && tb === null) return 0;
+      if (ta === null) return 1;
+      if (tb === null) return -1;
+      return (ta - tb) * dir;
+    });
+
+    return sorted;
+  };
+
+  // Quantas vezes o mesmo telefone aparece nos pedidos já CARREGADOS (não só nos filtrados) — é uma
+  // noção de "cliente recorrente", não uma contagem oficial: se a paginação ainda não carregou tudo
+  // (ver hasMoreOrders/"Carregar todos"), pedidos antigos desse telefone fora da página não entram
+  // na conta. useMemo para não escanear todos os pedidos de novo a cada linha da tabela.
+  const phoneOrderCounts = useMemo(() => {
+    const counts = {};
+    for (const o of orders) {
+      const phone = String(o.customerPhone || '').replace(/\D/g, '');
+      if (!phone) continue;
+      counts[phone] = (counts[phone] || 0) + 1;
+    }
+    return counts;
+  }, [orders]);
+
+  // Contagem de pedidos reais a partir da etapa de Letra Gerada (excluindo etapas preliminares 1 a 4)
+  const activeOrdersCount = useMemo(() => {
+    return orders.filter(o => !isOrderPreLyrics(o)).length;
+  }, [orders]);
+
+  // Os cards de faturamento/vendas/pedidos do topo viraram um componente próprio (pedido 12/09/2026:
+  // "os valores não estão batendo" com a tabela Vendas por dia) — ver src/components/FaturamentoCards.jsx
+  // pro porquê de precisar de consulta independente desta lista paginada.
+
+  const parseAmount = (val, fallback = null) => {
+    if (val === undefined || val === null || val === '') return fallback;
+    if (typeof val === 'number') return val;
+    if (typeof val === 'string') {
+      const parsed = parseFloat(val.replace(',', '.'));
+      if (!isNaN(parsed)) return parsed;
+    }
+    return fallback;
+  };
+
+  // Valor confirmado no servidor; o catálogo USD serve somente para identificar o pacote.
+  const getOrderProductBreakdown = (order) => {
+    const paid = ['PAGAMENTO_APROVADO', 'PAGO'].includes(order.paymentStatus);
+    if (!paid) return { items: [], total: 0 };
+    const paidCents = Number(order.usPaidCents ?? order.extras?.usPaidCents);
+    const amount = Number.isSafeInteger(paidCents) && paidCents >= 0 ? paidCents / 100 : parseAmount(order.paidAmount, null);
+    if (amount === null) return { items: [], total: 0 };
+    const selected = getUsPackage(order.extras?.us?.sku || order.usPackageSku || order.paymentIntentSku);
+    return { items: [{ label: selected?.name || 'Pagamento confirmado', amount }], total: amount };
+  };
+
+  // getFaturamentoMusicas/Videos/Total, getVendasCount e getGastoGeracaoMusicas viraram
+  // FaturamentoCards.jsx (pedido 12/09/2026) — a lógica de valor combo/vídeo separado e o custo por
+  // geração da Kie.ai continuam do mesmo jeito lá, só a fonte dos pedidos mudou (consulta própria por
+  // data de PAGAMENTO em vez de reaproveitar esta lista, filtrada por data de CRIAÇÃO).
+
+
+
+  // Reconciliação no servidor: varre pedidos presos em GERANDO_AUDIO e pagamentos ainda em
+  // AGUARDANDO_PAGAMENTO, confirmando cada um direto na Kie.ai e na Efí. Existe porque a via normal
+  // (webhook + polling do navegador do cliente) morre junto com a aba do cliente — ver o comentário
+  // de topo de src/app/api/orders/reconcile/route.js.
+
+  // Varredura de conferência de pagamentos (pedido 20/09/2026): cruza as cobranças geradas com o
+  // status REAL na Efí e mostra as que foram pagas e não liberaram nada. Duas etapas de propósito —
+  // primeiro o relatório (GET, não muda nada), e só depois de ver a lista é que o admin confirma
+  // (POST). Ver src/app/api/orders/audit-payments/route.js.
+  // Carrega o número salvo ao abrir o painel. Se nunca foi salvo, mostra o padrão do código, que
+  // é o que as páginas do cliente estão usando de fato.
+  useEffect(() => {
+    lerConfigSite().then((cfg) => {
+      setNumeroSuporte(cfg?.whatsappSuporte || WHATSAPP_SUPORTE_PADRAO);
+      if (cfg?.sunoPrimaryProvider) {
+        setSunoPrimaryProvider(cfg.sunoPrimaryProvider);
+      }
+      if (cfg?.contingencyMode !== undefined) {
+        setContingencyMode(Boolean(cfg.contingencyMode));
+      }
+      if (cfg?.sunoWorkerHeartbeat !== undefined) {
+        setSunoWorkerHeartbeat(cfg.sunoWorkerHeartbeat);
+      }
+    });
+  }, []);
+
+  const handleToggleContingencia = async () => {
+    const novoValor = !contingencyMode;
+    setSalvandoContingencia(true);
+    setMsgContingencia('');
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      const res = await fetch('/api/admin/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({ contingencyMode: novoValor }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMsgContingencia(data.error || 'Não foi possível alterar.');
+        return;
+      }
+      setContingencyMode(Boolean(data.contingencyMode));
+      setMsgContingencia(`✅ Salvo: Modo Contingência ${data.contingencyMode ? 'ATIVADO (clientes irão pro WhatsApp)' : 'DESATIVADO (geração automática via API)'}.`);
+    } catch (err) {
+      setMsgContingencia('Falha de conexão ao salvar.');
+    } finally {
+      setSalvandoContingencia(false);
+    }
+  };
+
+  const handleSalvarProvider = async (novoProvider) => {
+    const providerEscolhido = novoProvider || sunoPrimaryProvider;
+    setSalvandoProvider(true);
+    setMsgProvider('');
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      const res = await fetch('/api/admin/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({ sunoPrimaryProvider: providerEscolhido }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMsgProvider(data.error || 'Não foi possível salvar.');
+        return;
+      }
+      setSunoPrimaryProvider(data.sunoPrimaryProvider);
+      const nomes = {
+        kie: 'Kie.ai',
+        unifically: 'Unifically',
+        suno_local: 'Suno Local (Robô PC)'
+      };
+      setMsgProvider(`✅ Salvo: Provedor principal alterado para ${nomes[data.sunoPrimaryProvider] || data.sunoPrimaryProvider}.`);
+    } catch (err) {
+      setMsgProvider('Falha de conexão ao salvar.');
+    } finally {
+      setSalvandoProvider(false);
+    }
+  };
+
+  const handleDispararTesteRobo = async () => {
+    setTestandoRobo(true);
+    setTesteRoboStatus('Criando pedido de teste...');
+    setTesteRoboAudioUrl(null);
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      const res = await fetch('/api/admin/suno-local/test', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${idToken}` }
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.orderId) {
+        setTesteRoboStatus(`❌ Falha ao criar teste: ${data.error || 'Erro desconhecido'}`);
+        setTestandoRobo(false);
+        return;
+      }
+
+      setTesteRoboStatus(`⏳ Pedido de teste criado! Aguardando o robô local no seu PC detectar...`);
+      const testOrderId = data.orderId;
+
+      let tentativas = 0;
+      const interval = setInterval(async () => {
+        tentativas++;
+        if (tentativas > 60) {
+          clearInterval(interval);
+          setTesteRoboStatus('⚠️ Tempo limite (3 min). Verifique se o iniciar-robo.bat está aberto no seu PC.');
+          setTestandoRobo(false);
+          return;
+        }
+
+        try {
+          const checkRes = await fetch(`/api/admin/suno-local/test?orderId=${testOrderId}`, {
+            headers: { Authorization: `Bearer ${idToken}` }
+          });
+          const checkData = await checkRes.json().catch(() => ({}));
+          if (checkData?.order) {
+            const o = checkData.order;
+            if (o.status_robo === 'PROCESSANDO') {
+              setTesteRoboStatus('🔄 Robô detectou o teste! Gerando a música no Suno.com...');
+            } else if (o.status_robo === 'CONCLUIDO' || o.musicUrl) {
+              clearInterval(interval);
+              setTesteRoboStatus('🎉 Sucesso! Música gerada e salva com sucesso no Cloudflare R2:');
+              setTesteRoboAudioUrl(o.musicUrl);
+              setTestandoRobo(false);
+            } else if (o.status_robo === 'FALHA_LOCAL') {
+              clearInterval(interval);
+              setTesteRoboStatus(`❌ Erro no robô local: ${o.robo_erro || 'Falha ao processar.'}`);
+              setTestandoRobo(false);
+            }
+          }
+        } catch (pollErr) {}
+      }, 3000);
+
+    } catch (err) {
+      setTesteRoboStatus(`❌ Erro de conexão: ${err.message}`);
+      setTestandoRobo(false);
+    }
+  };
+
+  const handleSalvarNumeroSuporte = async () => {
+    const normalizado = normalizarNumeroWhatsapp(numeroSuporte);
+    if (!normalizado) {
+      setMsgNumero('Número inválido. Use DDD + número, por exemplo 94991064043.');
+      return;
+    }
+    setSalvandoNumero(true);
+    setMsgNumero('');
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      const res = await fetch('/api/admin/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({ whatsappSuporte: normalizado }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMsgNumero(data.error || 'Não foi possível salvar.');
+        return;
+      }
+      setNumeroSuporte(data.whatsappSuporte);
+      setMsgNumero('✅ Salvo. Os botões do site já apontam para este número.');
+    } catch (err) {
+      setMsgNumero('Falha de conexão ao salvar.');
+    } finally {
+      setSalvandoNumero(false);
+    }
+  };
+
+  const handleAuditPayments = async (aplicar = false, nextOffset = 0) => {
+    if (aplicar && !confirm('Confirmar e liberar TODOS os pagamentos encontrados nesta varredura?')) return;
+
+    setAuditing(true);
+    if (!aplicar && nextOffset === 0) setAuditResult(null);
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      const params = new URLSearchParams({
+        dias: String(auditDias),
+        offset: String(nextOffset)
+      });
+      if (auditSoCopiaram) params.set('pixCopiado', 'true');
+
+      const bodyPayload = (aplicar && auditResult?.itens?.length) ? JSON.stringify({ itens: auditResult.itens }) : undefined;
+
+      const res = await fetch(`/api/orders/audit-payments?${params}`, {
+        method: aplicar ? 'POST' : 'GET',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+        body: bodyPayload,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        if (nextOffset > 0 && auditResult && !aplicar) {
+          const combinedItens = [...(auditResult.itens || []), ...(data.itens || [])];
+          setAuditResult({
+            ...data,
+            itens: combinedItens,
+            pagosNaoLiberados: combinedItens.length,
+            valorTotal: Number(combinedItens.reduce((s, p) => s + (p.valor || 0), 0).toFixed(2)),
+            verificados: (auditResult.verificados || 0) + data.verificados,
+            totalVerificadosAteAgora: data.totalVerificadosAteAgora
+          });
+        } else {
+          setAuditResult(data);
+        }
+      } else {
+        setAuditResult({ error: data.error || 'Falha na varredura.' });
+      }
+    } catch (e) {
+      setAuditResult({ error: 'Falha de conexão na varredura.' });
+    } finally {
+      setAuditing(false);
+    }
+  };
+
+
+
+  const getStatusBadgeColor = (status) => {
+    switch (status) {
+      case 'PAGAMENTO_APROVADO':
+      case 'FINALIZADO':
+      case 'ENTREGUE':
+        return '#059669'; // verde escuro
+      case 'EM_PRODUCAO':
+      case 'VERSOES_EM_PRODUCAO':
+        return '#7c3aed'; // roxo
+      case 'LETRA_GERADA':
+      case 'LETRA_CRIADA':
+      case 'AGUARDANDO_APROVACAO':
+        return '#d97706'; // laranja
+      case 'ETAPA_1':
+      case 'ETAPA_2':
+      case 'ETAPA_3':
+      case 'ETAPA_4':
+        return '#2563eb'; // azul
+      default:
+        return '#64748b'; // cinza
+    }
+  };
+
+  const formatDateWithTime = (createdAt) => {
+    if (!createdAt) return 'N/A';
+    try {
+      let dateObj;
+      if (createdAt?.toDate) {
+        dateObj = createdAt.toDate();
+      } else if (typeof createdAt === 'string' || typeof createdAt === 'number') {
+        dateObj = new Date(createdAt);
+      }
+      if (!dateObj || isNaN(dateObj.getTime())) return 'N/A';
+
+      const day = String(dateObj.getDate()).padStart(2, '0');
+      const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+      const year = dateObj.getFullYear();
+      const hours = String(dateObj.getHours()).padStart(2, '0');
+      const minutes = String(dateObj.getMinutes()).padStart(2, '0');
+
+      return `${day}/${month}/${year} às ${hours}:${minutes}`;
+    } catch {
+      return 'N/A';
+    }
+  };
+
+  // Funções de Exclusão conectadas à API resiliente
+  const handleDeleteSingleOrder = async (id, orderNumber) => {
+    if (!confirm(`Deseja realmente excluir permanentemente a solicitação ${orderNumber || id}?`)) return;
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      const res = await fetch('/api/orders/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
+        body: JSON.stringify({ orderId: id })
+      });
+      if (res.ok) {
+        setSelectedOrderIds(prev => prev.filter(item => item !== id));
+        setOrders(prev => prev.filter(item => item.id !== id));
+      } else {
+        alert("Falha ao excluir a solicitação.");
+      }
+    } catch (err) {
+      console.error("Erro ao excluir solicitação:", err);
+      alert("Falha ao excluir a solicitação.");
+    }
+  };
+
+  const handleDeleteSelectedOrders = async () => {
+    if (selectedOrderIds.length === 0) return;
+    if (!confirm(`Deseja realmente excluir permanentemente as ${selectedOrderIds.length} solicitações selecionadas?`)) return;
+
+    setDeletingOrders(true);
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      const res = await fetch('/api/orders/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
+        body: JSON.stringify({ orderIds: selectedOrderIds })
+      });
+
+      if (res.ok) {
+        const idsToRemove = [...selectedOrderIds];
+        setSelectedOrderIds([]);
+        setOrders(prev => prev.filter(item => !idsToRemove.includes(item.id)));
+        alert("Solicitações excluídas com sucesso!");
+      } else {
+        alert("Falha ao excluir solicitações.");
+      }
+    } catch (err) {
+      console.error("Erro ao excluir em massa:", err);
+      alert("Ocorreu um erro ao excluir as solicitações.");
+    } finally {
+      setDeletingOrders(false);
+    }
+  };
+
+  const toggleSelectAll = (filteredList) => {
+    if (selectedOrderIds.length === filteredList.length) {
+      setSelectedOrderIds([]);
+    } else {
+      setSelectedOrderIds(filteredList.map(o => o.id));
+    }
+  };
+
+  const toggleSelectOrder = (id) => {
+    setSelectedOrderIds(prev =>
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
+  };
+
+  if (checkingAuth) {
+    return (
+      <div style={styles.loadingWrapper}>
+        <div style={styles.spinner} />
+      </div>
+    );
+  }
+
+  const filteredOrders = getFilteredOrders();
+
+  return (
+    <div style={styles.wrapper}>
+      {/* Header com Tema Claro */}
+      <header style={styles.header}>
+        <div style={styles.headerContainer}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+            <Link href="/admin" style={{ display: 'flex', alignItems: 'center', gap: '8px', textDecoration: 'none' }}>
+              <Image src="/logo.png" alt="NSMusic" width={36} height={36} style={{ height: '36px', width: 'auto' }} priority />
+              <span style={{ fontSize: '0.9rem', color: '#0f172a', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Painel Admin</span>
+            </Link>
+
+            {/* Navegação Mobile (Caixa suspensa / Select) */}
+            <div className="admin-mobile-only" style={{ width: '100%', marginTop: '6px' }}>
+              <select
+                value={activeTab}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === 'DASHBOARD') {
+                    router.push('/admin/dashboard');
+                  } else if (val === 'ANUNCIOS') {
+                    router.push('/admin/anuncios');
+                  } else if (val === 'CARTAS') {
+                    router.push('/admin/cartas');
+                  } else {
+                    setActiveTab(val);
+                  }
+                }}
+                style={{
+                  width: '100%',
+                  padding: '9px 12px',
+                  borderRadius: '8px',
+                  border: '1.5px solid #7c3aed',
+                  backgroundColor: '#ffffff',
+                  color: '#0f172a',
+                  fontWeight: '700',
+                  fontSize: '0.88rem',
+                  outline: 'none',
+                }}
+              >
+                <option value="ORDERS">📦 Pedidos ({activeOrdersCount})</option>
+                <option value="CONTAS">👤 Contas & Créditos</option>
+                <option value="FINANCEIRO">💰 Financeiro (Receitas & Despesas)</option>
+                <option value="REMIX">🎛️ Remix / Cover Suno</option>
+                <option value="DASHBOARD">📊 Dashboard ➔</option>
+                <option value="ANUNCIOS">🎯 Anúncios (ROI/CPA) ➔</option>
+                <option value="CARTAS">💌 Temas da Carta ➔</option>
+                <option value="LIMITES">🚦 Limites de Geração</option>
+                <option value="AJUSTES">⚙️ Ajustes Gerais</option>
+              </select>
+            </div>
+
+            {/* Tabs Navigation Desktop */}
+            <div className="admin-desktop-only" style={{ gap: '8px', flexWrap: 'wrap' }}>
+              <button 
+                onClick={() => setActiveTab('ORDERS')}
+                style={{
+                  ...styles.tabBtn,
+                  backgroundColor: activeTab === 'ORDERS' ? '#7c3aed' : '#e2e8f0',
+                  color: activeTab === 'ORDERS' ? '#ffffff' : '#334155',
+                }}
+              >
+                📦 Pedidos ({activeOrdersCount})
+              </button>
+              <button
+                onClick={() => setActiveTab('CONTAS')}
+                style={{
+                  ...styles.tabBtn,
+                  backgroundColor: activeTab === 'CONTAS' ? '#7c3aed' : '#e2e8f0',
+                  color: activeTab === 'CONTAS' ? '#ffffff' : '#334155',
+                  fontWeight: '700',
+                }}
+              >
+                👤 Contas & Créditos
+              </button>
+              <button
+                onClick={() => setActiveTab('FINANCEIRO')}
+                style={{
+                  ...styles.tabBtn,
+                  backgroundColor: activeTab === 'FINANCEIRO' ? '#7c3aed' : '#e2e8f0',
+                  color: activeTab === 'FINANCEIRO' ? '#ffffff' : '#334155',
+                  fontWeight: '700',
+                }}
+              >
+                💰 Financeiro
+              </button>
+              <button
+                onClick={() => setActiveTab('REMIX')}
+                style={{
+                  ...styles.tabBtn,
+                  backgroundColor: activeTab === 'REMIX' ? '#7c3aed' : '#e2e8f0',
+                  color: activeTab === 'REMIX' ? '#ffffff' : '#334155',
+                  fontWeight: '700',
+                }}
+              >
+                🎛️ Remix & Cover
+              </button>
+              <Link href="/admin/dashboard" style={{ ...styles.tabBtn, backgroundColor: '#e2e8f0', color: '#334155', textDecoration: 'none', display: 'inline-block' }}>
+                📊 Dashboard
+              </Link>
+              <Link href="/admin/anuncios" style={{ ...styles.tabBtn, backgroundColor: '#1e293b', color: '#60a5fa', textDecoration: 'none', display: 'inline-block', fontWeight: '700' }}>
+                🎯 Anúncios (ROI/CPA)
+              </Link>
+              <Link href="/admin/cartas" style={{ ...styles.tabBtn, backgroundColor: '#e2e8f0', color: '#334155', textDecoration: 'none', display: 'inline-block' }}>
+                💌 Temas da Carta
+              </Link>
+              <button
+                onClick={() => setActiveTab('LIMITES')}
+                style={{
+                  ...styles.tabBtn,
+                  backgroundColor: activeTab === 'LIMITES' ? '#7c3aed' : '#e2e8f0',
+                  color: activeTab === 'LIMITES' ? '#ffffff' : '#334155',
+                }}
+              >
+                🚦 Limites
+              </button>
+              <button
+                onClick={() => setActiveTab('AJUSTES')}
+                style={{
+                  ...styles.tabBtn,
+                  backgroundColor: activeTab === 'AJUSTES' ? '#7c3aed' : '#e2e8f0',
+                  color: activeTab === 'AJUSTES' ? '#ffffff' : '#334155',
+                }}
+              >
+                ⚙️ Ajustes
+              </button>
+            </div>
+          </div>
+
+          <div style={styles.userInfo}>
+            <UnificallyCreditsBadge />
+            <KieCreditsBadge />
+            <WhatsAppUsageBadge />
+            <button
+              type="button"
+              onClick={() => setReloadTrigger((prev) => prev + 1)}
+              disabled={loadingOrders || isRefreshing}
+              style={{
+                background: '#f8fafc',
+                border: '1px solid #cbd5e1',
+                borderRadius: '8px',
+                padding: '6px 12px',
+                fontSize: '0.8rem',
+                fontWeight: '700',
+                color: '#475569',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                transition: 'all 0.2s',
+              }}
+              title={lastRefreshedAt ? `Última atualização: ${lastRefreshedAt.toLocaleTimeString('pt-BR')}` : 'Atualizar'}
+            >
+              <span style={{ display: 'inline-block', transform: isRefreshing ? 'rotate(180deg)' : 'none', transition: 'transform 0.5s' }}>🔄</span>
+              {isRefreshing ? 'Atualizando...' : 'Atualizar'}
+            </button>
+            <button onClick={handleLogout} style={styles.logoutBtn}>Sair ➔</button>
+          </div>
+        </div>
+      </header>
+
+      <main style={{ flex: 1, padding: '32px 0' }}>
+        <div className="container" style={{ maxWidth: '1280px', margin: '0 auto', padding: '0 20px' }}>
+          
+          {activeTab === 'CONTAS' ? (
+            <AbaContas authUser={user} />
+          ) : activeTab === 'FINANCEIRO' ? (
+            <AbaFinanceiro />
+          ) : activeTab === 'REMIX' ? (
+            <AbaRemixCover />
+          ) : activeTab === 'TIMBRES' ? (
+            <TabelaTimbresClientes />
+          ) : activeTab === 'LIMITES' ? (
+            <LimitesCota />
+          ) : activeTab === 'AJUSTES' ? (
+            <div style={{ maxWidth: '760px' }}>
+              <h2 style={{ fontSize: '1.2rem', fontWeight: '800', color: '#0f172a', margin: '0 0 4px' }}>Ajustes</h2>
+              <p style={{ fontSize: '0.85rem', color: '#64748b', margin: '0 0 20px' }}>
+                Configurações que valem para o site inteiro. Mudam na hora, sem precisar de deploy.
+              </p>
+              {/* Barra de Controle Master do Agente WhatsApp */}
+              <div className="admin-agent-bar" style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '10px 16px',
+                borderRadius: '12px',
+                background: agentEnabled ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)',
+                border: agentEnabled ? '1.5px solid #10b981' : '1.5px solid #ef4444',
+                marginBottom: '24px',
+                flexWrap: 'wrap',
+                gap: '10px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                  <span className="admin-agent-icon" style={{ fontSize: '1.3rem', flexShrink: 0 }}>{agentEnabled ? '🤖' : '🛑'}</span>
+                  <div style={{ minWidth: 0 }}>
+                    <h4 className="admin-agent-title" style={{ margin: 0, fontSize: '0.92rem', fontWeight: '800', color: agentEnabled ? '#047857' : '#b91c1c' }}>
+                      Robô WhatsApp: {agentEnabled ? 'ATIVADO' : 'DESATIVADO (Atendimento 100% Humano)'}
+                    </h4>
+                    <p className="admin-agent-desc" style={{ margin: '2px 0 0 0', fontSize: '0.8rem', color: '#475569' }}>
+                      {agentEnabled
+                        ? 'A IA está conversando com clientes no WhatsApp. Se quiser assumir sem interferência, desative aqui.'
+                        : 'A IA está 100% em silêncio no WhatsApp. Você pode conversar livremente com os clientes.'}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  className="admin-agent-btn"
+                  onClick={handleToggleAgent}
+                  disabled={togglingAgent}
+                  style={{
+                    padding: '8px 16px',
+                    fontSize: '0.82rem',
+                    fontWeight: '800',
+                    borderRadius: '8px',
+                    backgroundColor: agentEnabled ? '#ef4444' : '#10b981',
+                    color: '#ffffff',
+                    border: 'none',
+                    cursor: 'pointer',
+                    boxShadow: agentEnabled ? '0 4px 12px rgba(239, 68, 68, 0.3)' : '0 4px 12px rgba(16, 185, 129, 0.3)',
+                    transition: 'all 0.2s ease',
+                    flexShrink: 0,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {togglingAgent ? 'Salvando...' : (agentEnabled ? '🛑 Desativar' : '✅ Ativar')}
+                </button>
+              </div>
+
+              {/* Número de WhatsApp do suporte. Editável aqui de propósito: é para onde TODOS os
+                  botões "Falar no WhatsApp" do site mandam o cliente, e trocar isso no código
+                  exigiria deploy (pedido 21/09/2026, número principal suspenso). */}
+              <div style={{
+                marginTop: '16px',
+                padding: '12px 16px',
+                borderRadius: '12px',
+                background: '#f8fafc',
+                border: '1px solid #e2e8f0',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                flexWrap: 'wrap',
+              }}>
+                <label htmlFor="numeroSuporte" style={{ fontSize: '0.82rem', fontWeight: '700', color: '#334155' }}>
+                  📱 WhatsApp do suporte
+                </label>
+                <input
+                  id="numeroSuporte"
+                  type="tel"
+                  value={numeroSuporte}
+                  onChange={(e) => { setNumeroSuporte(e.target.value); setMsgNumero(''); }}
+                  placeholder="94991064043"
+                  style={{
+                    flex: '1 1 160px',
+                    minWidth: '140px',
+                    padding: '8px 10px',
+                    borderRadius: '8px',
+                    border: '1px solid #cbd5e1',
+                    fontSize: '0.88rem',
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={handleSalvarNumeroSuporte}
+                  disabled={salvandoNumero}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    background: salvandoNumero ? '#94a3b8' : '#7c3aed',
+                    color: '#fff',
+                    fontWeight: '700',
+                    fontSize: '0.85rem',
+                    cursor: salvandoNumero ? 'default' : 'pointer',
+                  }}
+                >
+                  {salvandoNumero ? 'Salvando...' : 'Salvar'}
+                </button>
+                {msgNumero && (
+                  <span style={{ fontSize: '0.8rem', color: msgNumero.startsWith('✅') ? '#059669' : '#dc2626', flexBasis: '100%' }}>
+                    {msgNumero}
+                  </span>
+                )}
+              </div>
+
+              {/* Provedor Principal da Música (IA): permite alternar entre Unifically e Kie.ai sem deploy.
+                  Quem for escolhido como principal é tentado primeiro; em caso de falha/timeout (>3min),
+                  o sistema executa failover automático para o secundário. */}
+              <div style={{
+                marginTop: '16px',
+                padding: '14px 16px',
+                borderRadius: '12px',
+                background: '#f8fafc',
+                border: '1px solid #e2e8f0',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+                  <div>
+                    <span style={{ fontSize: '0.88rem', fontWeight: '700', color: '#1e293b' }}>
+                      🎹 Provedor Principal de Música (IA)
+                    </span>
+                    <span style={{ display: 'block', fontSize: '0.78rem', color: '#64748b' }}>
+                      Se o principal falhar (falta de crédito, erro ou &gt; 3 min gerando), o fallback entra automaticamente.
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={() => handleSalvarProvider('unifically')}
+                      disabled={salvandoProvider}
+                      style={{
+                        padding: '7px 14px',
+                        borderRadius: '8px',
+                        border: '1.5px solid ' + (sunoPrimaryProvider === 'unifically' ? '#7c3aed' : '#cbd5e1'),
+                        background: sunoPrimaryProvider === 'unifically' ? '#7c3aed' : '#ffffff',
+                        color: sunoPrimaryProvider === 'unifically' ? '#ffffff' : '#334155',
+                        fontWeight: '700',
+                        fontSize: '0.82rem',
+                        cursor: salvandoProvider ? 'default' : 'pointer'
+                      }}
+                    >
+                      {sunoPrimaryProvider === 'unifically' ? '⭐ Unifically (Principal)' : 'Unifically'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSalvarProvider('kie')}
+                      disabled={salvandoProvider}
+                      style={{
+                        padding: '7px 14px',
+                        borderRadius: '8px',
+                        border: '1.5px solid ' + (sunoPrimaryProvider === 'kie' ? '#7c3aed' : '#cbd5e1'),
+                        background: sunoPrimaryProvider === 'kie' ? '#7c3aed' : '#ffffff',
+                        color: sunoPrimaryProvider === 'kie' ? '#ffffff' : '#334155',
+                        fontWeight: '700',
+                        fontSize: '0.82rem',
+                        cursor: salvandoProvider ? 'default' : 'pointer'
+                      }}
+                    >
+                      {sunoPrimaryProvider === 'kie' ? '⭐ Kie.ai (Principal)' : 'Kie.ai'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSalvarProvider('suno_local')}
+                      disabled={salvandoProvider}
+                      style={{
+                        padding: '7px 14px',
+                        borderRadius: '8px',
+                        border: '1.5px solid ' + (sunoPrimaryProvider === 'suno_local' ? '#0284c7' : '#cbd5e1'),
+                        background: sunoPrimaryProvider === 'suno_local' ? '#0284c7' : '#ffffff',
+                        color: sunoPrimaryProvider === 'suno_local' ? '#ffffff' : '#334155',
+                        fontWeight: '700',
+                        fontSize: '0.82rem',
+                        cursor: salvandoProvider ? 'default' : 'pointer'
+                      }}
+                    >
+                      {sunoPrimaryProvider === 'suno_local' ? '⭐ Suno Local (Robô PC)' : '🖥️ Suno Local (PC)'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Status do Robô Local Suno */}
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '10px',
+                  padding: '12px 14px',
+                  borderRadius: '10px',
+                  background: isWorkerOnline ? '#f0fdf4' : '#fff7ed',
+                  border: isWorkerOnline ? '1px solid #bbf7d0' : '1px solid #fed7aa',
+                  fontSize: '0.8rem',
+                  color: isWorkerOnline ? '#166534' : '#9a3412',
+                  marginTop: '6px'
+                }}>
+                  <span style={{ fontSize: '1.2rem', lineHeight: 1 }}>{isWorkerOnline ? '🟢' : '⚪'}</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ fontWeight: '700' }}>
+                          Robô Local (Suno.com no PC): {isWorkerOnline ? 'Online e Pronto' : 'Desconectado / Inativo'}
+                        </span>
+                        <span style={{
+                          fontSize: '0.7rem',
+                          fontWeight: '700',
+                          background: sunoPrimaryProvider === 'suno_local' ? '#16a34a' : '#64748b',
+                          color: '#ffffff',
+                          padding: '1px 6px',
+                          borderRadius: '4px'
+                        }}>
+                          {sunoPrimaryProvider === 'suno_local' ? 'LIGADO PARA CLIENTES' : 'DESLIGADO PARA CLIENTES'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {isWorkerOnline ? (
+                      <span style={{ display: 'block', fontSize: '0.74rem', color: '#15803d', marginTop: '2px' }}>
+                        Host: <strong>{sunoWorkerHeartbeat?.hostname || 'PC'}</strong> · Visto em {new Date(sunoWorkerHeartbeat?.timestamp).toLocaleTimeString('pt-BR')}. Geração direta com sua conta Suno Pro/Premier.
+                      </span>
+                    ) : (
+                      <span style={{ display: 'block', fontSize: '0.74rem', color: '#c2410c', marginTop: '2px' }}>
+                        Para gerar pela sua assinatura, execute <code>iniciar-robo.bat</code> na pasta <code>local-worker</code>. Se estiver offline e o cliente criar uma música, o failover automático assumirá a Kie.ai após 3 min.
+                      </span>
+                    )}
+
+                    {/* Controles de Ligar/Desligar e Teste */}
+                    <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      {sunoPrimaryProvider === 'suno_local' ? (
+                        <button
+                          type="button"
+                          onClick={() => handleSalvarProvider('kie')}
+                          disabled={salvandoProvider}
+                          style={{
+                            padding: '6px 12px',
+                            borderRadius: '6px',
+                            border: '1px solid #ef4444',
+                            background: '#fee2e2',
+                            color: '#b91c1c',
+                            fontWeight: '700',
+                            fontSize: '0.76rem',
+                            cursor: salvandoProvider ? 'default' : 'pointer'
+                          }}
+                        >
+                          ⏹️ Desligar Robô para Clientes (Voltar para Kie.ai)
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleSalvarProvider('suno_local')}
+                          disabled={salvandoProvider}
+                          style={{
+                            padding: '6px 12px',
+                            borderRadius: '6px',
+                            border: '1px solid #10b981',
+                            background: '#d1fae5',
+                            color: '#065f46',
+                            fontWeight: '700',
+                            fontSize: '0.76rem',
+                            cursor: salvandoProvider ? 'default' : 'pointer'
+                          }}
+                        >
+                          ▶️ Ligar Robô Local para Clientes
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={handleDispararTesteRobo}
+                        disabled={testandoRobo}
+                        style={{
+                          padding: '6px 12px',
+                          borderRadius: '6px',
+                          border: '1px solid #3b82f6',
+                          background: '#eff6ff',
+                          color: '#1d4ed8',
+                          fontWeight: '700',
+                          fontSize: '0.76rem',
+                          cursor: testandoRobo ? 'default' : 'pointer'
+                        }}
+                      >
+                        {testandoRobo ? '⏳ Executando Teste...' : '🧪 Testar Robô Agora (Sem Afetar Clientes)'}
+                      </button>
+                    </div>
+
+                    {/* Feedback do Teste em Tempo Real */}
+                    {(testeRoboStatus || testeRoboAudioUrl) && (
+                      <div style={{
+                        marginTop: '10px',
+                        padding: '10px 12px',
+                        borderRadius: '6px',
+                        background: '#ffffff',
+                        border: '1px solid #e2e8f0',
+                        fontSize: '0.78rem'
+                      }}>
+                        <div style={{ color: '#1e293b', fontWeight: '600' }}>{testeRoboStatus}</div>
+                        {testeRoboAudioUrl && (
+                          <div style={{ marginTop: '8px' }}>
+                            <audio controls src={testeRoboAudioUrl} style={{ width: '100%', height: '36px' }} />
+                            <a
+                              href={testeRoboAudioUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{ display: 'inline-block', marginTop: '4px', color: '#2563eb', fontSize: '0.72rem', textDecoration: 'underline' }}
+                            >
+                              Abrir arquivo MP3 no R2 ↗
+                            </a>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {msgProvider && (
+                  <span style={{ fontSize: '0.8rem', color: msgProvider.startsWith('✅') ? '#059669' : '#dc2626' }}>
+                    {msgProvider}
+                  </span>
+                )}
+
+                {/* Card de Modo de Contingência (Geração via WhatsApp) */}
+                <div
+                  style={{
+                    marginTop: '14px',
+                    padding: '14px 16px',
+                    borderRadius: '12px',
+                    border: contingencyMode ? '2px solid #f59e0b' : '1px solid #e2e8f0',
+                    background: contingencyMode ? '#fffbeb' : '#f8fafc',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '10px'
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '1.25rem' }}>{contingencyMode ? '🚨' : '🛡️'}</span>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontSize: '0.88rem', fontWeight: '800', color: '#1e293b' }}>
+                            Modo Contingência (Geração via WhatsApp)
+                          </span>
+                          <span
+                            style={{
+                              fontSize: '0.72rem',
+                              fontWeight: '700',
+                              padding: '2px 8px',
+                              borderRadius: '999px',
+                              background: contingencyMode ? '#fef3c7' : '#dcfce7',
+                              color: contingencyMode ? '#b45309' : '#15803d',
+                              border: contingencyMode ? '1px solid #fde68a' : '1px solid #bbf7d0',
+                            }}
+                          >
+                            {contingencyMode ? 'ATIVADO' : 'DESATIVADO (Normal)'}
+                          </span>
+                        </div>
+                        <span style={{ fontSize: '0.78rem', color: '#64748b', display: 'block', marginTop: '2px' }}>
+                          Quando ativo (em caso de falha geral nas APIs), o cliente no <code>/criar</code> ao aprovar a letra é direcionado direto pro seu WhatsApp com a letra e estilo prontos para você gerar no Suno manual.
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleToggleContingencia}
+                      disabled={salvandoContingencia}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: '8px',
+                        border: 'none',
+                        background: contingencyMode ? '#dc2626' : '#f59e0b',
+                        color: '#ffffff',
+                        fontWeight: '700',
+                        fontSize: '0.82rem',
+                        cursor: salvandoContingencia ? 'default' : 'pointer'
+                      }}
+                    >
+                      {salvandoContingencia ? 'Salvando...' : (contingencyMode ? 'Desativar Contingência' : '🚨 Ativar Contingência')}
+                    </button>
+                  </div>
+                  {msgContingencia && (
+                    <span style={{ fontSize: '0.8rem', color: msgContingencia.startsWith('✅') ? '#059669' : '#dc2626' }}>
+                      {msgContingencia}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+            </div>
+          ) : activeTab === 'ORDERS' ? (
+            <div>
+              <FaturamentoCards dateFrom={dateFrom} dateTo={dateTo} reloadTrigger={reloadTrigger} />
+
+              {/* Funil de conversão e abandono por etapa com filtros rápidos por clique */}
+              <FunilStatusCards
+                orders={orders}
+                dateFrom={dateFrom}
+                dateTo={dateTo}
+                reloadTrigger={reloadTrigger}
+                activeProductionFilter={productionStatusFilter}
+                onSelectProductionFilter={(st) => setProductionStatusFilter(st)}
+                activePaymentFilter={paymentStatusFilter}
+                onSelectPaymentFilter={(st) => setPaymentStatusFilter(st)}
+              />
+
+              {/* Tabela por dia, mapa de calor por horário e mapa por estado moraram aqui até
+                  12/09/2026 — pedido do dono pra ficarem em /admin/dashboard junto do resto da
+                  análise (esta página é pra navegar PEDIDOS, não pra ser o painel de métricas). */}
+
+              {/* Filtros e Barra de Ações em Massa */}
+              {/* Filtros e Barra de Ações em Massa */}
+              <div style={{ marginTop: '24px' }}>
+                {/* Busca por texto em DESTAQUE (com foco em telefone) */}
+                <div style={{ marginBottom: '16px' }}>
+                  <div style={{ position: 'relative', width: '100%', maxWidth: '520px' }}>
+                    <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', fontSize: '1.1rem', pointerEvents: 'none' }}>📱</span>
+                    <input
+                      id="admin-search"
+                      type="text"
+                      placeholder="Buscar por telefone (ex: 9499106...), nome ou código..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '11px 36px 11px 38px',
+                        borderRadius: '10px',
+                        border: '1.5px solid #cbd5e1',
+                        fontSize: '0.92rem',
+                        color: '#0f172a',
+                        outline: 'none',
+                        boxSizing: 'border-box',
+                        backgroundColor: '#ffffff',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
+                      }}
+                    />
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setSearchQuery('')}
+                        style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', color: '#94a3b8', lineHeight: 1 }}
+                        title="Limpar busca"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Abas: tipo de compra (música/vídeo) - Mobile em Select, Desktop em Botões */}
+                <div className="admin-mobile-only" style={{ marginBottom: '14px', width: '100%' }}>
+                  <label htmlFor="admin-purchase-type-select" style={{ display: 'block', fontSize: '0.76rem', color: '#64748b', fontWeight: '700', marginBottom: '4px' }}>
+                    Tipo de Venda
+                  </label>
+                  <select
+                    id="admin-purchase-type-select"
+                    value={purchaseTypeTab}
+                    onChange={(e) => setPurchaseTypeTab(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '9px 12px',
+                      borderRadius: '8px',
+                      border: '1px solid #cbd5e1',
+                      backgroundColor: '#ffffff',
+                      color: '#0f172a',
+                      fontSize: '0.88rem',
+                      fontWeight: '600',
+                    }}
+                  >
+                    <option value="ALL">📋 Todas as vendas</option>
+                    <option value="MUSIC">🎵 Vendas de música</option>
+                    <option value="VIDEO">🎬 Vendas de vídeo</option>
+                    <option value="CARD">💳 Cartão de Crédito</option>
+                    <option value="PIX">⚡ Só PIX</option>
+                    <option value="PIX_COPIADO">📋 Copiou PIX e não pagou</option>
+                  </select>
+                </div>
+
+                <div className="admin-desktop-only" style={{ gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
+                  {[
+                    { id: 'ALL', label: 'Todas as vendas' },
+                    { id: 'MUSIC', label: '🎵 Vendas de música' },
+                    { id: 'VIDEO', label: '🎬 Vendas de vídeo' },
+                    { id: 'CARD', label: '💳 Cartão' },
+                    { id: 'PIX', label: '⚡ PIX' },
+                    { id: 'PIX_COPIADO', label: '📋 Copiou PIX e não pagou' },
+                  ].map(tab => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setPurchaseTypeTab(tab.id)}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: '8px',
+                        border: '1px solid ' + (purchaseTypeTab === tab.id ? '#7c3aed' : '#e2e8f0'),
+                        background: purchaseTypeTab === tab.id ? '#7c3aed' : '#ffffff',
+                        color: purchaseTypeTab === tab.id ? '#ffffff' : '#334155',
+                        fontWeight: '600',
+                        fontSize: '0.85rem',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Filtro de data e status (Grid organizado e responsivo) */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(135px, 1fr))', gap: '10px', alignItems: 'flex-end', marginBottom: '16px' }}>
+                  <div>
+                    <label htmlFor="admin-date-from" style={{ display: 'block', fontSize: '0.76rem', color: '#64748b', marginBottom: '4px', fontWeight: '600' }}>De</label>
+                    <input
+                      id="admin-date-from"
+                      type="date"
+                      value={dateFrom}
+                      onChange={(e) => setDateFrom(e.target.value)}
+                      style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '0.85rem', boxSizing: 'border-box' }}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="admin-date-to" style={{ display: 'block', fontSize: '0.76rem', color: '#64748b', marginBottom: '4px', fontWeight: '600' }}>Até</label>
+                    <input
+                      id="admin-date-to"
+                      type="date"
+                      value={dateTo}
+                      onChange={(e) => setDateTo(e.target.value)}
+                      style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '0.85rem', boxSizing: 'border-box' }}
+                    />
+                  </div>
+                  {(dateFrom || dateTo) && (
+                    <button
+                      type="button"
+                      onClick={() => { setDateFrom(''); setDateTo(''); }}
+                      style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid #e2e8f0', background: '#ffffff', color: '#64748b', fontSize: '0.8rem', cursor: 'pointer', height: '35px' }}
+                    >
+                      Limpar datas
+                    </button>
+                  )}
+
+                  <div>
+                    <label htmlFor="admin-payment-status" style={{ display: 'block', fontSize: '0.78rem', color: '#64748b', marginBottom: '4px' }}>Status pagamento</label>
+                    <select
+                      id="admin-payment-status"
+                      value={paymentStatusFilter}
+                      onChange={(e) => setPaymentStatusFilter(e.target.value)}
+                      style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '0.85rem', color: '#0f172a' }}
+                    >
+                      <option value="ALL">Todos</option>
+                      <option value="AGUARDANDO_PAGAMENTO">Aguardando pagamento</option>
+                      <option value="PAGAMENTO_APROVADO">Pago</option>
+                      <option value="RECUSADO">Recusado</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label htmlFor="admin-production-status" style={{ display: 'block', fontSize: '0.78rem', color: '#64748b', marginBottom: '4px' }}>Status produção</label>
+                    <select
+                      id="admin-production-status"
+                      value={productionStatusFilter}
+                      onChange={(e) => setProductionStatusFilter(e.target.value)}
+                      style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '0.85rem', color: '#0f172a' }}
+                    >
+                      <option value="ALL">A partir da Letra (padrão)</option>
+                      <option value="TODOS_INCLUINDO_RASCUNHOS">Todos (incluindo etapas 1 a 4)</option>
+                      <option value="ETAPA_1">Etapa 1 (Pessoa)</option>
+                      <option value="ETAPA_2">Etapa 2 (História)</option>
+                      <option value="ETAPA_3">Etapa 3 (Som)</option>
+                      <option value="ETAPA_4">Etapa 4 (Revisão)</option>
+                      <option value="LETRA_GERADA">Letra gerada</option>
+                      <option value="LETRA_APROVADA">Letra aprovada</option>
+                      <option value="EM_PRODUCAO">Em produção</option>
+                      <option value="VERSOES_EM_PRODUCAO">Versões em produção</option>
+                      <option value="AUDIO_GERADO">Áudio gerado</option>
+                      <option value="FINALIZADO">Finalizado</option>
+                      <option value="ENTREGUE">Entregue</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label htmlFor="admin-provider-filter" style={{ display: 'block', fontSize: '0.78rem', color: '#64748b', marginBottom: '4px' }}>Provedor IA</label>
+                    <select
+                      id="admin-provider-filter"
+                      value={providerFilter}
+                      onChange={(e) => setProviderFilter(e.target.value)}
+                      style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '0.85rem', color: '#0f172a' }}
+                    >
+                      <option value="ALL">Todos os provedores</option>
+                      <option value="suno_local">🖥️ Robô PC (Local)</option>
+                      <option value="kie">🟣 Kie.ai</option>
+                      <option value="unifically">🌐 Unifically</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label htmlFor="admin-sort-by" style={{ display: 'block', fontSize: '0.78rem', color: '#64748b', marginBottom: '4px' }}>Ordenar por</label>
+                    <select
+                      id="admin-sort-by"
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value)}
+                      style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '0.85rem', color: '#0f172a' }}
+                    >
+                      <option value="createdAt_desc">Criação (mais recente)</option>
+                      <option value="createdAt_asc">Criação (mais antigo)</option>
+                      <option value="paidAt_desc">Pagamento (mais recente)</option>
+                      <option value="paidAt_asc">Pagamento (mais antigo)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={styles.filterBar}>
+                  <div style={styles.filterTitle}>
+                    <h3 style={{ fontSize: '1.3rem', fontWeight: '800', color: '#0f172a' }}>Gerenciamento de Solicitações</h3>
+                  </div>
+
+                  {/* Ações em Massa */}
+                  {selectedOrderIds.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: '#fef2f2', border: '1px solid #fca5a5', padding: '8px 16px', borderRadius: '10px' }}>
+                      <span style={{ fontSize: '0.85rem', color: '#991b1b', fontWeight: 'bold' }}>
+                        {selectedOrderIds.length} selecionado(s)
+                      </span>
+                      <button
+                        onClick={handleDeleteSelectedOrders}
+                        disabled={deletingOrders}
+                        style={{
+                          padding: '8px 14px',
+                          background: '#dc2626',
+                          color: '#ffffff',
+                          border: 'none',
+                          borderRadius: '6px',
+                          fontWeight: 'bold',
+                          fontSize: '0.85rem',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {deletingOrders ? 'Excluindo...' : '🗑️ Excluir Selecionados'}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Filtro por status do pedido - Mobile em select, Desktop em abas */}
+                  <div className="admin-mobile-only" style={{ marginBottom: '12px', width: '100%' }}>
+                    <label htmlFor="admin-filter-status-select" style={{ display: 'block', fontSize: '0.76rem', color: '#64748b', fontWeight: '700', marginBottom: '4px' }}>
+                      Status do Pedido
+                    </label>
+                    <select
+                      id="admin-filter-status-select"
+                      value={filter}
+                      onChange={(e) => setFilter(e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '9px 12px',
+                        borderRadius: '8px',
+                        border: '1px solid #cbd5e1',
+                        backgroundColor: '#ffffff',
+                        color: '#0f172a',
+                        fontWeight: '700',
+                        fontSize: '0.88rem',
+                      }}
+                    >
+                      <option value="ALL">Todos os pedidos ({activeOrdersCount})</option>
+                      <option value="NEW">Novos ({orders.filter(o => o.paymentStatus === 'PAGAMENTO_APROVADO' && o.productionStatus === 'LETRA_APROVADA').length})</option>
+                      <option value="PRODUCTION">Em Produção ({orders.filter(o => o.productionStatus === 'EM_PRODUCAO' || o.productionStatus === 'VERSOES_EM_PRODUCAO').length})</option>
+                      <option value="FINISHED">Finalizados ({orders.filter(o => o.productionStatus === 'FINALIZADO' || o.productionStatus === 'ENTREGUE').length})</option>
+                    </select>
+                  </div>
+
+                  <div className="admin-desktop-only" style={styles.filterBtns}>
+                    <button 
+                      onClick={() => setFilter('ALL')} 
+                      style={{ ...styles.filterBtn, borderBottom: filter === 'ALL' ? '3px solid #7c3aed' : 'none', color: filter === 'ALL' ? '#7c3aed' : '#64748b', fontWeight: filter === 'ALL' ? 'bold' : '600' }}
+                    >
+                      Todos ({activeOrdersCount})
+                    </button>
+                    <button 
+                      onClick={() => setFilter('NEW')} 
+                      style={{ ...styles.filterBtn, borderBottom: filter === 'NEW' ? '3px solid #7c3aed' : 'none', color: filter === 'NEW' ? '#7c3aed' : '#64748b', fontWeight: filter === 'NEW' ? 'bold' : '600' }}
+                    >
+                      Novos ({orders.filter(o => o.paymentStatus === 'PAGAMENTO_APROVADO' && o.productionStatus === 'LETRA_APROVADA').length})
+                    </button>
+                    <button 
+                      onClick={() => setFilter('PRODUCTION')} 
+                      style={{ ...styles.filterBtn, borderBottom: filter === 'PRODUCTION' ? '3px solid #7c3aed' : 'none', color: filter === 'PRODUCTION' ? '#7c3aed' : '#64748b', fontWeight: filter === 'PRODUCTION' ? 'bold' : '600' }}
+                    >
+                      Em Produção ({orders.filter(o => o.productionStatus === 'EM_PRODUCAO' || o.productionStatus === 'VERSOES_EM_PRODUCAO').length})
+                    </button>
+                    <button 
+                      onClick={() => setFilter('FINISHED')} 
+                      style={{ ...styles.filterBtn, borderBottom: filter === 'FINISHED' ? '3px solid #7c3aed' : 'none', color: filter === 'FINISHED' ? '#7c3aed' : '#64748b', fontWeight: filter === 'FINISHED' ? 'bold' : '600' }}
+                    >
+                      Finalizados ({orders.filter(o => o.productionStatus === 'FINALIZADO' || o.productionStatus === 'ENTREGUE').length})
+                    </button>
+                  </div>
+                </div>
+
+                {loadingOrders ? (
+                  <div style={styles.loadingOrders}>
+                    <div style={styles.spinner} />
+                    <p style={{ marginTop: '16px', color: '#475569' }}>Carregando listagem de solicitações...</p>
+                  </div>
+                ) : filteredOrders.length === 0 ? (
+                  <div style={styles.emptyState}>
+                    <span style={{ fontSize: '2.5rem' }}>📭</span>
+                    <h4 style={{ color: '#0f172a', fontSize: '1.2rem', marginTop: '8px' }}>Nenhuma solicitação encontrada</h4>
+                    <p style={{ color: '#64748b', fontSize: '0.9rem', marginTop: '4px' }}>Nenhum registro se enquadra no filtro selecionado.</p>
+                  </div>
+                ) : (
+                  <div style={styles.tableCard}>
+                    <table style={styles.table}>
+                      <thead>
+                        <tr style={styles.thRow}>
+                          <th style={styles.th}>Cliente / Zap</th>
+                          <th style={styles.th}>Código</th>
+                          <th style={styles.th}>Valor Pago</th>
+                          <th style={styles.th}>Status Produção</th>
+                          <th style={styles.th}>Data & Hora</th>
+                          <th style={styles.th}>Pago em</th>
+                          <th style={{ ...styles.th, width: '60px', textAlign: 'center' }}>Excluir</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredOrders.map((o) => {
+                          const isSelected = selectedOrderIds.includes(o.id);
+                          const isPaid = o.paymentStatus === 'PAGAMENTO_APROVADO' || o.paymentStatus === 'PAGO';
+                          return (
+                            <tr
+                              key={o.id}
+                              className="admin-order-row"
+                              onClick={() => router.push(`/admin/pedidos/${o.id}`)}
+                              title="Clique para abrir detalhes do pedido"
+                              style={{
+                                ...styles.tr,
+                                backgroundColor: isSelected ? '#f1f5f9' : isPaid ? '#f0fdf4' : '#ffffff',
+                                borderLeft: isPaid ? '4px solid #22c55e' : '4px solid transparent'
+                              }}
+                            >
+                              <td style={styles.td}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                  {/* Indicadores na ordem: Pago ou não -> Origem -> Copiou Pix -> Ouviu prévia */}
+                                  <div
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '6px',
+                                      padding: '3px 6px',
+                                      backgroundColor: '#f8fafc',
+                                      borderRadius: '8px',
+                                      border: '1px solid #e2e8f0',
+                                      flexShrink: 0,
+                                    }}
+                                  >
+                                    {/* 1. Ícone de pago ou não */}
+                                    {(() => {
+                                      const isPaid = o.paymentStatus === 'PAGAMENTO_APROVADO' || o.paymentStatus === 'PAGO';
+                                      return isPaid ? (
+                                        <span
+                                          title={o.paidAt ? `Pago em ${formatDateWithTime(o.paidAt)}` : 'Pagamento Aprovado'}
+                                          style={{ fontSize: '0.9rem', cursor: 'help', lineHeight: 1 }}
+                                        >
+                                          ✅
+                                        </span>
+                                      ) : (
+                                        <span
+                                          title="Aguardando Pagamento"
+                                          style={{ fontSize: '0.9rem', cursor: 'help', opacity: 0.35, lineHeight: 1 }}
+                                        >
+                                          ⏳
+                                        </span>
+                                      );
+                                    })()}
+
+                                    {/* 2. Ícone de onde veio o cliente (Facebook, TikTok, etc.) */}
+                                    <PlatformIcon order={o} size={15} />
+
+                                    {/* 2.5 Método de Pagamento: ⚡ PIX ou 💳 Cartão */}
+                                    {(() => {
+                                      const isPaid = o.paymentStatus === 'PAGAMENTO_APROVADO' || o.paymentStatus === 'PAGO' || o.paidAt || o.videoAddonPaid || o.cartaAddonPaid || o.playbackAddonPaid;
+                                      if (!isPaid) return null;
+                                      const isCard = isStripePayment(o);
+                                      if (isCard) {
+                                        return (
+                                          <span
+                                            title="Stripe: taxas, valor líquido e repasses exigem conciliação no painel Stripe."
+                                            style={{
+                                              fontSize: '0.7rem',
+                                              padding: '2px 5px',
+                                              borderRadius: '5px',
+                                              backgroundColor: '#f3e8ff',
+                                              color: '#7c3aed',
+                                              border: '1px solid #d8b4fe',
+                                              fontWeight: '700',
+                                              cursor: 'help',
+                                              display: 'inline-flex',
+                                              alignItems: 'center',
+                                              gap: '2px',
+                                              lineHeight: 1,
+                                              whiteSpace: 'nowrap',
+                                            }}
+                                          >
+                                            💳 Cartão
+                                          </span>
+                                        );
+                                      }
+                                      return (
+                                        <span
+                                          title="Provedor de pagamento não identificado; confira a transação no Stripe."
+                                          style={{
+                                            fontSize: '0.7rem',
+                                            padding: '2px 5px',
+                                            borderRadius: '5px',
+                                            backgroundColor: '#ccfbf1',
+                                            color: '#0f766e',
+                                            border: '1px solid #99f6e4',
+                                            fontWeight: '700',
+                                            cursor: 'help',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '2px',
+                                            lineHeight: 1,
+                                            whiteSpace: 'nowrap',
+                                          }}
+                                        >
+                                          ⚡ PIX
+                                        </span>
+                                      );
+                                    })()}
+
+                                    {/* 3. Se copiou o código Pix */}
+                                    {(() => {
+                                      const pixCopied = o.pixCopiedAt || o.extras?.pixCopiedAt || (hasOrderGeneratedPix(o) ? (o.pixGeneratedAt || o.extras?.pixGeneratedAt || true) : null);
+                                      return pixCopied ? (
+                                        <span
+                                          title={typeof pixCopied === 'string' ? `Copiou o código Pix em ${new Date(pixCopied).toLocaleString('pt-BR')}` : 'Copiou/Gerou o código Pix'}
+                                          style={{ fontSize: '0.85rem', cursor: 'help', lineHeight: 1 }}
+                                        >
+                                          📋
+                                        </span>
+                                      ) : (
+                                        <span
+                                          title="Ainda não copiou o Pix"
+                                          style={{ fontSize: '0.85rem', cursor: 'help', opacity: 0.25, lineHeight: 1 }}
+                                        >
+                                          📋
+                                        </span>
+                                      );
+                                    })()}
+
+                                    {/* 4. Se ouviu a prévia */}
+                                    <span
+                                      title={o.previewListenedAt ? `Ouviu a prévia em ${new Date(o.previewListenedAt).toLocaleString('pt-BR')}` : 'Ainda não deu play na prévia'}
+                                      style={{ fontSize: '0.85rem', cursor: 'help', opacity: o.previewListenedAt ? 1 : 0.25, lineHeight: 1 }}
+                                    >
+                                      🎧
+                                    </span>
+                                  </div>
+
+                                  {/* Contato do cliente */}
+                                  <div style={{ minWidth: 0 }}>
+                                    <div style={{ fontWeight: '600', color: '#0f172a', whiteSpace: 'nowrap' }}>
+                                      {o.customerName || 'Cliente'}
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
+                                      {o.customerPhone ? (
+                                        <a
+                                          href={`https://wa.me/${formatToWhatsAppNumber(o.customerPhone)}`}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          onClick={(e) => e.stopPropagation()}
+                                          title="Abrir conversa no WhatsApp"
+                                          style={{ fontSize: '0.8rem', color: '#25D366', fontWeight: '600', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '3px', whiteSpace: 'nowrap' }}
+                                        >
+                                          📲 {o.customerPhone}
+                                        </a>
+                                      ) : (
+                                        <span style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: '500' }}>N/A</span>
+                                      )}
+                                      {(() => {
+                                        const digits = String(o.customerPhone || '').replace(/\D/g, '');
+                                        const count = digits ? phoneOrderCounts[digits] : 0;
+                                        return count > 1 ? (
+                                          <span
+                                            title="Total de pedidos carregados com este telefone"
+                                            style={{ fontSize: '0.68rem', fontWeight: '700', color: '#7c3aed', backgroundColor: '#f3e8ff', padding: '1px 6px', borderRadius: '999px', whiteSpace: 'nowrap' }}
+                                          >
+                                            {count}x cliente
+                                          </span>
+                                        ) : null;
+                                      })()}
+                                    </div>
+                                  </div>
+                                </div>
+                              </td>
+                              <td style={{ ...styles.td, fontWeight: '700', color: '#0f172a' }}>
+                                <span style={{ whiteSpace: 'nowrap' }}>
+                                  {o.orderNumber || o.id.substring(0, 8)}
+                                </span>
+                              </td>
+                              <td style={{ ...styles.td, fontWeight: '700' }}>
+                                {(() => {
+                                  const { items, total } = getOrderProductBreakdown(o);
+                                  if (items.length === 0) return <span style={{ color: '#94a3b8', fontWeight: '500' }}>{['PAGAMENTO_APROVADO', 'PAGO'].includes(o.paymentStatus) ? 'Valor não registrado; conferir Stripe' : 'Não pago'}</span>;
+                                  const isExpanded = expandedValueRows.has(o.id);
+                                  const isCard = isStripePayment(o);
+                                  return (
+                                    <div>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          toggleValueExpanded(o.id);
+                                        }}
+                                        title={isExpanded ? 'Ocultar produtos confirmados' : 'Ver produtos confirmados'}
+                                        style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: '#059669', fontWeight: '700', fontSize: 'inherit', fontFamily: 'inherit' }}
+                                      >
+                                        US$ {total.toFixed(2).replace('.', ',')}
+                                        {isCard && (
+                                          <span style={{ fontSize: '0.68rem', color: '#7c3aed', backgroundColor: '#f3e8ff', padding: '1px 5px', borderRadius: '4px', border: '1px solid #d8b4fe', marginLeft: '4px', whiteSpace: 'nowrap' }}>
+                                            Bruto
+                                          </span>
+                                        )}
+                                        {items.length > 1 && (
+                                          <span style={{ fontSize: '0.7rem', color: '#64748b' }}>{isExpanded ? '▲' : '▼'}</span>
+                                        )}
+                                      </button>
+                                      {isCard && (
+                                        <div style={{ fontSize: '0.67rem', color: '#64748b', fontWeight: '500', marginTop: '2px', lineHeight: 1.2 }}>
+                                          <span>Taxas, líquido e repasses: conciliar no Stripe.</span>
+                                        </div>
+                                      )}
+                                      {isExpanded && items.length > 1 && (
+                                        <div style={{ marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                          {items.map((item) => (
+                                            <span key={item.label} style={{ fontSize: '0.7rem', fontWeight: '600', color: '#334155', whiteSpace: 'nowrap' }}>
+                                              {item.label}: US$ {item.amount.toFixed(2).replace('.', ',')}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+                              </td>
+                              <td style={styles.td}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
+                                  <span style={{ ...styles.statusBadge, border: `1px solid ${getStatusBadgeColor(o.productionStatus)}44`, color: getStatusBadgeColor(o.productionStatus), backgroundColor: `${getStatusBadgeColor(o.productionStatus)}10` }}>
+                                    {o.productionStatus || 'PENDENTE'}
+                                  </span>
+                                  {o.sunoProvider === 'suno_local' && (
+                                    <span title="Provedor registrado: Robô Local. Custos não conciliados." style={{ fontSize: '0.7rem', fontWeight: '700', color: '#0369a1', backgroundColor: '#e0f2fe', padding: '1px 6px', borderRadius: '6px', border: '1px solid #bae6fd', display: 'inline-flex', alignItems: 'center', gap: '3px', whiteSpace: 'nowrap' }}>
+                                      🖥️ Robô PC
+                                    </span>
+                                  )}
+                                  {o.sunoProvider === 'kie' && (
+                                    <span title="Provedor registrado: Kie.ai. Custos exigem conciliação com o provedor." style={{ fontSize: '0.7rem', fontWeight: '700', color: '#6d28d9', backgroundColor: '#f5f3ff', padding: '1px 6px', borderRadius: '6px', border: '1px solid #ddd6fe', display: 'inline-flex', alignItems: 'center', gap: '3px', whiteSpace: 'nowrap' }}>
+                                      🟣 Kie.ai
+                                    </span>
+                                  )}
+                                  {o.sunoProvider === 'unifically' && (
+                                    <span title="Música gerada pela Unifically" style={{ fontSize: '0.7rem', fontWeight: '700', color: '#0f766e', backgroundColor: '#f0fdfa', padding: '1px 6px', borderRadius: '6px', border: '1px solid #ccfbf1', display: 'inline-flex', alignItems: 'center', gap: '3px', whiteSpace: 'nowrap' }}>
+                                      🌐 Unifically
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td style={{ ...styles.td, fontSize: '0.85rem', color: '#0f172a', fontWeight: '600', whiteSpace: 'nowrap' }}>
+                                🕒 {formatDateWithTime(o.createdAt)}
+                              </td>
+                              <td style={{ ...styles.td, fontSize: '0.85rem', color: o.paidAt ? '#059669' : '#94a3b8', fontWeight: '600', whiteSpace: 'nowrap' }}>
+                                {o.paidAt ? `💰 ${formatDateWithTime(o.paidAt)}` : '—'}
+                              </td>
+                              <td style={{ ...styles.td, textAlign: 'center', width: '60px' }}>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteSingleOrder(o.id, o.orderNumber);
+                                  }}
+                                  title="Excluir Solicitação"
+                                  style={styles.deleteSingleBtn}
+                                >
+                                  🗑️
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {hasMoreOrders && (
+                  <div style={{ display: 'flex', justifyContent: 'center', gap: '12px', padding: '20px 0' }}>
+                    <button
+                      type="button"
+                      onClick={handleLoadMoreOrders}
+                      disabled={loadingMore}
+                      style={{ padding: '10px 24px', fontSize: '0.9rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: '#ffffff', color: '#334155', fontWeight: '600', cursor: 'pointer' }}
+                    >
+                      {loadingMore ? 'Carregando...' : '⬇️ Carregar mais 200'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setLoadingMore(true); setLoadAll(true); }}
+                      disabled={loadingMore}
+                      style={{ padding: '10px 24px', fontSize: '0.9rem', borderRadius: '8px', border: '1px solid #7c3aed', background: '#7c3aed', color: '#ffffff', fontWeight: '600', cursor: 'pointer' }}
+                    >
+                      {loadingMore ? 'Carregando...' : '📋 Carregar todos'}
+                    </button>
+                  </div>
+                )}
+
+              </div>
+            </div>
+          ) : (
+            // Conferência de pagamento. Esta aba já teve mutirões de reenvio (música presa e
+            // WhatsApp de "música pronta"), removidos em 20/09/2026 por serem de incidentes
+            // encerrados ou falso positivo — sobrou o que é útil no dia a dia.
+            <div style={{ maxWidth: '900px', margin: '0 auto' }}>
+              <h2 style={{ fontSize: '1.5rem', fontWeight: '800', color: '#0f172a', marginBottom: '8px' }}>Conferência de Pagamentos</h2>
+              <p style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: '24px' }}>
+                Pergunta à Efí quais cobranças foram realmente pagas e não liberaram o produto.
+              </p>
+
+              {/* Duas etapas de propósito: o admin primeiro VÊ a lista do que a Efí diz que foi
+                  pago e não liberou, e só então decide confirmar. Cobre também add-on avulso, que
+                  nunca mexe em paymentStatus e some de qualquer conferência que só olhe esse campo. */}
+              <div className="glass-card" style={{ padding: '20px', borderRadius: '14px', backgroundColor: '#ffffff', border: '1px solid #e2e8f0', marginBottom: '20px' }}>
+                <h3 style={{ fontSize: '1rem', fontWeight: '800', color: '#0f172a', marginBottom: '6px' }}>
+                  Conferir pagamentos contra a Efí
+                </h3>
+                <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: '14px' }}>
+                  Pergunta à Efí, cobrança por cobrança, quais foram realmente pagas e não liberaram
+                  o produto — música ou add-on. A conferência não altera nada; depois de ver a lista
+                  você decide se confirma.
+                </p>
+
+                <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '14px' }}>
+                  <label style={{ fontSize: '0.85rem', color: '#334155', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    Período:
+                    <select
+                      value={auditDias}
+                      onChange={(e) => setAuditDias(Number(e.target.value))}
+                      style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                    >
+                      <option value={1}>24 horas</option>
+                      <option value={3}>3 dias</option>
+                      <option value={7}>7 dias</option>
+                      <option value={15}>15 dias</option>
+                      <option value={30}>30 dias</option>
+                    </select>
+                  </label>
+
+                  <label style={{ fontSize: '0.85rem', color: '#334155', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={auditSoCopiaram} onChange={(e) => setAuditSoCopiaram(e.target.checked)} />
+                    📋 Só quem copiou o PIX
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={() => handleAuditPayments(false, 0)}
+                    disabled={auditing}
+                    className="btn btn-primary"
+                    style={{ padding: '11px 20px', fontSize: '0.9rem', fontWeight: '700', opacity: auditing ? 0.6 : 1, cursor: auditing ? 'wait' : 'pointer' }}
+                  >
+                    {auditing ? '⏳ Conferindo...' : '🔎 Conferir pagamentos'}
+                  </button>
+                </div>
+
+                {auditResult && (
+                  auditResult.error ? (
+                    <div style={{ padding: '12px 16px', backgroundColor: '#fee2e2', border: '1px solid #ef4444', borderRadius: '8px', color: '#991b1b', fontWeight: '600', fontSize: '0.85rem' }}>
+                      {auditResult.error}
+                    </div>
+                  ) : (
+                    <div style={{ padding: '12px 16px', backgroundColor: auditResult.pagosNaoLiberados > 0 ? '#fef3c7' : '#d1fae5', border: `1px solid ${auditResult.pagosNaoLiberados > 0 ? '#f59e0b' : '#10b981'}`, borderRadius: '8px', color: auditResult.pagosNaoLiberados > 0 ? '#92400e' : '#065f46', fontSize: '0.85rem' }}>
+                      <strong>
+                        {auditResult.verificados} cobrança(s) conferida(s) em {auditResult.dias} dia(s) —{' '}
+                        {auditResult.pagosNaoLiberados} paga(s) e não liberada(s)
+                        {auditResult.pagosNaoLiberados > 0 ? ` (US$ ${auditResult.valorTotal.toFixed(2).replace('.', ',')})` : ''}.
+                      </strong>
+                      {auditResult.naoVerificados > 0 && (
+                        <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px dashed #cbd5e1' }}>
+                          <p style={{ fontWeight: '600', marginBottom: '8px' }}>
+                            ⚠️ {auditResult.naoVerificados} cobrança(s) ainda não foram conferidas neste período.
+                          </p>
+                          {auditResult.proximoOffset !== null && (
+                            <button
+                              type="button"
+                              onClick={() => handleAuditPayments(false, auditResult.proximoOffset)}
+                              disabled={auditing}
+                              style={{
+                                padding: '8px 16px',
+                                backgroundColor: '#2563eb',
+                                color: '#ffffff',
+                                border: 'none',
+                                borderRadius: '8px',
+                                fontWeight: '700',
+                                fontSize: '0.85rem',
+                                cursor: auditing ? 'wait' : 'pointer'
+                              }}
+                            >
+                              {auditing ? '⏳ Conferindo próximo lote...' : `⏭️ Conferir próximo lote (${Math.min(60, auditResult.naoVerificados)} de ${auditResult.naoVerificados} restantes)`}
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {auditResult.itens?.length > 0 && (
+                        <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          {auditResult.itens.map((it) => (
+                            <div key={it.txid} style={{ padding: '8px 10px', background: '#ffffff', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '0.8rem', color: '#0f172a' }}>
+                              <strong>{it.orderNumber || it.orderId}</strong> · {it.customerName || 'Cliente'} · {it.customerPhone || 'sem telefone'}
+                              <br />
+                              {it.tipo === 'addon' ? `Add-on (${it.sku})` : 'Música'} · US$ {Number(it.valor || 0).toFixed(2).replace('.', ',')} · pago em {it.pagoEm ? new Date(it.pagoEm).toLocaleString('pt-BR') : '—'}
+                              {it.aprovado && <span style={{ color: '#059669', fontWeight: '700' }}> · ✅ liberado agora</span>}
+                              {it.erroAprovacao && <span style={{ color: '#b91c1c', fontWeight: '700' }}> · ❌ falhou ao liberar</span>}
+                            </div>
+                          ))}
+
+                          {!auditResult.aplicado && (
+                            <button
+                              type="button"
+                              onClick={() => handleAuditPayments(true)}
+                              disabled={auditing}
+                              style={{ marginTop: '6px', padding: '11px 20px', fontSize: '0.88rem', fontWeight: '800', borderRadius: '8px', border: 'none', background: '#059669', color: '#fff', cursor: auditing ? 'wait' : 'pointer' }}
+                            >
+                              ✅ Confirmar e liberar {auditResult.pagosNaoLiberados} pagamento(s)
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                )}
+              </div>
+
+
+              {/* Removidos em 20/09/2026 a pedido do dono: o mutirão de reenvio do WhatsApp
+                  "música pronta" (incidente de 14/08, já encerrado) e a lista de "pedidos travados
+                  na geração", que na prática só juntava quem desistiu antes de aprovar a letra —
+                  falso positivo, sem motivo registrado. Conferência de pagamento vive no card 2. */}
+            </div>
+          )}
+
+        </div>
+      </main>
+    </div>
+  );
+}
+
+const styles = {
+  wrapper: {
+    minHeight: '100vh',
+    display: 'flex',
+    flexDirection: 'column',
+    backgroundColor: '#f8fafc',
+    color: '#0f172a',
+    fontFamily: 'system-ui, -apple-system, sans-serif',
+  },
+  loadingWrapper: {
+    minHeight: '100vh',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f8fafc',
+  },
+  spinner: {
+    width: '40px',
+    height: '40px',
+    border: '3px solid #e2e8f0',
+    borderTopColor: '#7c3aed',
+    borderRadius: '50%',
+    animation: 'spin 1s linear infinite',
+  },
+  header: {
+    backgroundColor: '#ffffff',
+    borderBottom: '1px solid #e2e8f0',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+  },
+  headerContainer: {
+    maxWidth: '1280px',
+    margin: '0 auto',
+    padding: '16px 20px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: '12px',
+  },
+  tabBtn: {
+    padding: '8px 16px',
+    borderRadius: '8px',
+    border: 'none',
+    fontSize: '0.9rem',
+    fontWeight: '600',
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+  },
+  userInfo: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '16px',
+  },
+  logoutBtn: {
+    background: 'none',
+    border: 'none',
+    color: '#dc2626',
+    fontSize: '0.9rem',
+    fontWeight: '700',
+    cursor: 'pointer',
+    outline: 'none',
+  },
+  metricsGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+    gap: '20px',
+  },
+  metricCard: {
+    padding: '24px',
+    backgroundColor: '#ffffff',
+    border: '1px solid #e2e8f0',
+    borderRadius: '14px',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+  metricLabel: {
+    fontSize: '0.85rem',
+    color: '#64748b',
+    fontWeight: '700',
+  },
+  metricValue: {
+    fontSize: '1.8rem',
+    fontWeight: '800',
+  },
+  filterBar: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: '16px',
+    borderBottom: '1px solid #e2e8f0',
+    paddingBottom: '16px',
+    marginBottom: '20px',
+  },
+  filterTitle: {
+    flex: 1,
+  },
+  filterBtns: {
+    display: 'flex',
+    gap: '8px',
+    flexWrap: 'wrap',
+  },
+  filterBtn: {
+    background: 'none',
+    border: 'none',
+    padding: '8px 12px',
+    cursor: 'pointer',
+    fontSize: '0.9rem',
+    outline: 'none',
+    transition: 'all 0.2s',
+  },
+  loadingOrders: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    padding: '60px 0',
+  },
+  emptyState: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    padding: '60px 20px',
+    textAlign: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: '16px',
+    border: '1px solid #e2e8f0',
+  },
+  tableCard: {
+    overflowX: 'auto',
+    backgroundColor: '#ffffff',
+    borderRadius: '16px',
+    border: '1px solid #e2e8f0',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.03)',
+  },
+  table: {
+    width: '100%',
+    borderCollapse: 'collapse',
+    textAlign: 'left',
+  },
+  thRow: {
+    backgroundColor: '#f8fafc',
+    borderBottom: '2px solid #e2e8f0',
+  },
+  th: {
+    padding: '16px 20px',
+    fontSize: '0.82rem',
+    fontWeight: '800',
+    color: '#475569',
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+  },
+  tr: {
+    borderBottom: '1px solid #f1f5f9',
+    transition: 'background-color 0.15s',
+  },
+  td: {
+    padding: '16px 20px',
+    fontSize: '0.92rem',
+    verticalAlign: 'middle',
+    color: '#1e293b',
+  },
+  statusBadge: {
+    display: 'inline-block',
+    padding: '4px 10px',
+    borderRadius: '100px',
+    fontSize: '0.75rem',
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: '0.03em',
+  },
+  formLabel: {
+    fontSize: '0.8rem',
+    fontWeight: '700',
+    color: '#475569',
+    marginBottom: '4px',
+    display: 'block',
+  },
+  adminInput: {
+    width: '100%',
+    padding: '10px 14px',
+    backgroundColor: '#ffffff',
+    border: '1px solid #cbd5e1',
+    borderRadius: '6px',
+    color: '#0f172a',
+    fontSize: '0.9rem',
+    outline: 'none',
+  },
+  whiteCard: {
+    backgroundColor: '#ffffff',
+    padding: '24px',
+    borderRadius: '14px',
+    border: '1px solid #e2e8f0',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.03)',
+  },
+  manageBtn: {
+    padding: '6px 12px',
+    fontSize: '0.8rem',
+    backgroundColor: '#f1f5f9',
+    color: '#475569',
+    border: '1px solid #cbd5e1',
+    borderRadius: '6px',
+    fontWeight: 'bold',
+    textDecoration: 'none',
+    display: 'inline-block'
+  },
+  deleteSingleBtn: {
+    padding: '6px 10px',
+    fontSize: '0.8rem',
+    backgroundColor: '#fef2f2',
+    color: '#dc2626',
+    border: '1px solid #fca5a5',
+    borderRadius: '6px',
+    fontWeight: 'bold',
+    cursor: 'pointer'
+  },
+  addBtn: {
+    padding: '6px 14px',
+    fontSize: '0.85rem',
+    backgroundColor: '#f1f5f9',
+    color: '#0f172a',
+    border: '1px solid #cbd5e1',
+    borderRadius: '6px',
+    fontWeight: 'bold',
+    cursor: 'pointer'
+  }
+};
