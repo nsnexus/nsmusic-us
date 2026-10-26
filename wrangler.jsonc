@@ -3,9 +3,33 @@
   "name": "nsmusic-us",
   "main": ".open-next/worker.js",
   "compatibility_date": "2026-10-26",
-  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
-  "assets": { "directory": ".open-next/assets", "binding": "ASSETS" },
-  "services": [{ "binding": "WORKER_SELF_REFERENCE", "service": "nsmusic-us" }],
-  "r2_buckets": [{ "binding": "nsmusic_media", "bucket_name": "nsmusic-us-media" }],
-  "observability": { "enabled": false }
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "nsmusic-us"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "nsmusic_media",
+      "bucket_name": "nsmusic-us-media"
+    }
+  ],
+  "routes": [
+    {
+      "pattern": "us.nsmusic.ia.br",
+      "custom_domain": true
+    }
+  ],
+  "observability": {
+    "enabled": false
+  }
 }
