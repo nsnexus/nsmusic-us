@@ -1,3 +1,4 @@
+import { sendUsWhatsAppPreview } from './usWhatsApp';
 import { US_GENRES } from './usCatalog';
 import { getUsEnv, getUsOrder, requireOwnedUsOrder, reserveUsGeneration, updateUsOrder } from './usOrders';
 import { readKieJob, readKieSongTracks } from './kieVoice';
@@ -218,6 +219,23 @@ export async function refreshPaidUsMusic(orderId, env) {
     const archived = await archiveUsTracks(order.id, tracks, env);
     await updateUsOrder(order.id, { audioFiles: tracks.map(track => track.audioUrl), audioUrl: tracks[0].audioUrl, audioUrl2: tracks[1]?.audioUrl || null, productionStatus: 'CONCLUIDO', sunoError: null }, env);
     if (!archived && env.nsmusic_media) await updateUsOrder(order.id, { usArchivePending: true }, env);
+
+    const destPhone = order.customer_phone || order.customerPhone || order.extras?.us?.customerPhone;
+    if (destPhone && !order.whatsapp_sent && !order.whatsappSent) {
+      try {
+        const siteUrl = env.NEXT_PUBLIC_SITE_URL || 'https://us.nsmusic.ia.br';
+        const deliveryLink = `${siteUrl}/delivery?orderId=${encodeURIComponent(order.id)}`;
+        await sendUsWhatsAppPreview(destPhone, {
+          customerName: order.customer_name || order.customerName,
+          honoreeName: order.honoree_name || order.honoreeName,
+          deliveryLink
+        }, env);
+        await updateUsOrder(order.id, { whatsapp_sent: true, whatsapp_sent_at: new Date().toISOString() }, env);
+      } catch (err) {
+        console.warn('[us-whatsapp] Falha ao enviar WhatsApp na conclusão:', err.message);
+      }
+    }
+
     return { status: 'COMPLETED', tracks: protectedTracks(order.id, tracks) };
   }
   if (job.state === 'success') return { status: 'ERROR', tracks: [], error: 'The music service returned no playable tracks. Please contact support.' };

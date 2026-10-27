@@ -11,7 +11,7 @@ export async function POST(req) {
     const spec = validateUsSpec(body);
     const pack = getUsPackage(body.sku);
     if (!pack || typeof body.lyrics !== 'string' || body.lyrics.trim().length < 80 || body.lyrics.length > 4500) return NextResponse.json({ error: 'Please use 80–4,500 characters of lyrics and choose a package.' }, { status: 400 });
-    const email = typeof body.customerEmail === 'string' ? body.customerEmail.trim() : '';
+    const email = typeof body.customerEmail === 'string' ? body.customerEmail.trim() : ''; const phone = typeof body.customerPhone === 'string' ? body.customerPhone.trim() : '';
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return NextResponse.json({ error: 'Please enter a valid email address.' }, { status: 400 });
     if (body.termsAccepted !== true) return NextResponse.json({ error: 'Please accept the terms before creating your order.' }, { status: 400 });
     const env = getUsEnv();
@@ -20,11 +20,11 @@ export async function POST(req) {
     const now = new Date().toISOString();
     const row = {
       id, order_number: 'US-' + Date.now().toString(36).toUpperCase() + '-' + id.slice(0, 5).toUpperCase(),
-      customer_name: spec.senderName || 'A friend', customer_email: email, customer_phone: '',
+      customer_name: spec.senderName || 'A friend', customer_email: email, customer_phone: phone, customer_phone_digits: phone.replace(/\D/g, ''),
       honoree_name: spec.recipientName, relationship: spec.relationship, occasion: spec.occasion, story: spec.story,
       music_style: spec.genre, music_mood: spec.mood, voice_type: spec.vocals, lyrics: body.lyrics.trim(),
       production_status: 'LETRA_CRIADA', payment_status: 'AGUARDANDO_PAGAMENTO', created_at: now, updated_at: now,
-      extras: { us: { market: 'US', currency: 'usd', sku: pack.sku, spec, ownerHash: await usHash(token) }, termsAccepted: true, termsAcceptedAt: now, total: pack.priceCents / 100 },
+      extras: { us: { market: 'US', currency: 'usd', sku: pack.sku, spec, ownerHash: await usHash(token), customerPhone: phone }, paymentMethod: 'stripe', paymentGateway: 'stripe', termsAccepted: true, termsAcceptedAt: now, total: pack.priceCents / 100 },
     };
     const { error } = await usDatabase(env).from('orders').insert(row);
     if (error) throw new Error('We could not save your order. Please try again.');
