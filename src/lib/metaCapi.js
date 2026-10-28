@@ -1,19 +1,8 @@
-// Conversions API da Meta — envia o evento de Purchase direto do servidor, no único ponto de
-// aprovação de pagamento (src/lib/payments.js:applyPaymentApproval). Substitui o fbq('track',
-// 'Purchase', ...) que existia em entrega/page.jsx: aquele dependia de localStorage pra não contar a
-// mesma venda duas vezes, e localStorage é por navegador — o link de entrega chega pelo WhatsApp, o
-// cliente frequentemente reabre no navegador embutido do WhatsApp (contexto diferente de onde pagou),
-// e cada reabertura sem o registro local disparava um Purchase novo pra Meta. Resultado real
-// (14-19/08/2026): 25 vendas confirmadas no banco, 42 contadas no Pixel.
-//
-// Servidor não tem esse problema: dispara uma vez, no momento exato da aprovação, independente de
-// quantos navegadores o cliente usa depois.
-
+// Conversions API da Meta — envia o evento de Purchase direto do servidor
 import { resolverSiteUrl } from './siteUrl.js';
 
 export const META_PIXELS = [
-  { id: '1366434898413500', tokenEnv: 'META_CAPI_ACCESS_TOKEN' },
-  { id: '1450829683640531', tokenEnv: 'META_CAPI_ACCESS_TOKEN_2', fallbackTokenEnv: 'META_CAPI_ACCESS_TOKEN' },
+  { id: '1450829683640531', tokenEnv: 'META_CAPI_ACCESS_TOKEN', fallbackTokenEnv: 'META_CAPI_ACCESS_TOKEN_2' },
 ];
 export const META_PIXEL_ID = META_PIXELS[0].id;
 const GRAPH_API_VERSION = 'v21.0';
@@ -31,10 +20,12 @@ async function sha256Hex(text) {
 function normalizePhoneForMatching(phone) {
   const digits = String(phone || '').replace(/\D/g, '');
   if (!digits) return null;
-  // Telefones no Brasil com 10 ou 11 dígitos (DDD + número) — a Meta exige DDI 55 em E.164
-  if (digits.length === 10 || digits.length === 11) {
-    return `55${digits}`;
-  }
+  // EUA: 10 dígitos (DDD + número) -> prefixa 1
+  if (digits.length === 10) return `1${digits}`;
+  // EUA com DDI 1 já incluso
+  if (digits.length === 11 && digits.startsWith('1')) return digits;
+  // Brasil com 10 ou 11 dígitos
+  if (digits.length === 10 || digits.length === 11) return `55${digits}`;
   return digits;
 }
 
@@ -45,17 +36,15 @@ function normalizeEmailForMatching(email) {
 
 /**
  * Envia um evento de Purchase pro Conversions API da Meta (para todos os pixels configurados).
- * @param {{orderId: string, value: number, contentName: string, customerPhone?: string, customerEmail?: string}} params
+ * @param {{orderId: string, value: number, currency?: string, contentName?: string, eventId?: string, customerPhone?: string, customerEmail?: string}} params
  * @param {object} env contexto de ambiente resolvido pela rota chamadora
  * @returns {Promise<{sent: boolean, reason?: string}>}
  */
-export async function sendMetaPurchaseEvent({ orderId, value, contentName = 'Música Homenagem Personalizada', eventId: customEventId, customerPhone, customerEmail }, env) {
+export async function sendMetaPurchaseEvent({ orderId, value, currency = 'USD', contentName = 'Custom Song', eventId: customEventId, customerPhone, customerEmail }, env) {
   if (typeof value !== 'number' || value <= 0) {
     return { sent: false, reason: 'invalid_value' };
   }
 
-  // Hasheado (SHA-256) — a Meta nunca recebe o telefone/e-mail em texto puro, só o hash pra
-  // correspondência (ver .claude/rules/security.md — nunca logar PII; aqui nem chega a logar).
   const userData = {};
   const normalizedPhone = normalizePhoneForMatching(customerPhone);
   const normalizedEmail = normalizeEmailForMatching(customerEmail);
@@ -63,10 +52,12 @@ export async function sendMetaPurchaseEvent({ orderId, value, contentName = 'Mú
   if (normalizedEmail) userData.em = [await sha256Hex(normalizedEmail)];
 
   // event_id idêntico entre servidor (CAPI) e navegador (Pixel) para a Meta desduplicar 100%
-  const eventId = customEventId || `purchase_${orderId}_musica`;
+  const eventId = customEventId || `purchase_${orderId}_us`;
 
   const siteUrl = resolverSiteUrl(readEnvValue(env, 'NEXT_PUBLIC_SITE_URL'));
-  const eventSourceUrl = `${siteUrl}/entrega?id=${encodeURIComponent(orderId)}`;
+  const isUs = (currency === 'USD') || siteUrl.includes('us.');
+  const deliveryPath = isUs ? `/delivery?orderId=${encodeURIComponent(orderId)}` : `/entrega?id=${encodeURIComponent(orderId)}`;
+  const eventSourceUrl = `${siteUrl}${deliveryPath}`;
 
   const payload = {
     data: [{
@@ -77,7 +68,7 @@ export async function sendMetaPurchaseEvent({ orderId, value, contentName = 'Mú
       action_source: 'website',
       user_data: userData,
       custom_data: {
-        currency: 'BRL',
+        currency: currency || 'USD',
         value,
         content_name: contentName,
         content_type: 'product',

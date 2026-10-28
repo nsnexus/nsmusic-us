@@ -14,9 +14,27 @@ export async function POST(req) {
       const sessionId = event.data.object.id;
       const paid = await fulfillUsSession(sessionId, null, env);
       if (paid) {
-        const { data, error } = await usDatabase(env).from('us_checkout_sessions').select('order_id').eq('id', sessionId).maybeSingle();
+        const { data, error } = await usDatabase(env).from('us_checkout_sessions').select('order_id, amount_cents').eq('id', sessionId).maybeSingle();
         if (error || !data) throw new Error('Order confirmation pending.');
         await startPaidUsMusic(data.order_id, env);
+        try {
+          const { sendMetaPurchaseEvent } = await import('@/lib/metaCapi');
+          const sessionObj = event.data?.object || {};
+          const customerEmail = sessionObj.customer_details?.email || sessionObj.customer_email || '';
+          const customerPhone = sessionObj.customer_details?.phone || '';
+          const value = (data.amount_cents || sessionObj.amount_total || 499) / 100;
+          await sendMetaPurchaseEvent({
+            orderId: data.order_id,
+            value,
+            currency: 'USD',
+            contentName: 'Custom Song',
+            eventId: `purchase_${data.order_id}_us`,
+            customerPhone,
+            customerEmail,
+          }, env);
+        } catch (capiErr) {
+          console.warn('[meta-capi-us] Falha ao enviar evento CAPI:', capiErr.message);
+        }
       }
     }
     if (event.type === 'charge.dispute.created' || (event.type === 'charge.refunded' && event.data.object.refunded === true)) {

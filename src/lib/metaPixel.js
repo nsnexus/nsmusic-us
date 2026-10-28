@@ -1,16 +1,17 @@
-// Correspondência avançada manual do Pixel do Facebook — chamar antes de um evento importante
-// (InitiateCheckout/Purchase) para a Meta casar o visitante com uma conta, mesmo sem cookie de
-// terceiro (Safari/iOS). O hash SHA-256 é feito pelo próprio script do Pixel no navegador, nunca
-// aqui. Nenhum destes valores é logado (ver .claude/rules/security.md).
-export const META_PIXEL_IDS = ['1366434898413500', '1450829683640531'];
+// Correspondência avançada manual do Pixel do Facebook
+export const META_PIXEL_IDS = ['1450829683640531'];
 export const META_PIXEL_ID = META_PIXEL_IDS[0];
 
-// Números salvos no formData/pedido são DDD + 9 dígitos (11 dígitos), sem código do país — a Meta
-// espera o telefone em E.164 sem símbolos, então adicionamos o 55 do Brasil.
 function normalizePhone(phone) {
   const digits = String(phone || '').replace(/\D/g, '');
-  if (digits.length !== 11) return null;
-  return `55${digits}`;
+  if (!digits) return null;
+  // EUA: 10 dígitos (DDD + número) -> prefixa 1
+  if (digits.length === 10) return `1${digits}`;
+  // EUA com DDI 1 já incluso
+  if (digits.length === 11 && digits.startsWith('1')) return digits;
+  // Brasil com 10 ou 11 dígitos
+  if (digits.length === 10 || digits.length === 11) return `55${digits}`;
+  return digits;
 }
 
 function normalizeEmail(email) {
@@ -18,9 +19,6 @@ function normalizeEmail(email) {
   return trimmed.includes('@') ? trimmed : null;
 }
 
-// E-mail é opcional no formulário (só o telefone é obrigatório e verificado) — por isso nunca
-// bloqueamos no e-mail ausente, só enviamos o que existir. Se não houver nem telefone válido nem
-// e-mail, não há nada de novo pra mandar e a chamada é ignorada.
 export function pushAdvancedMatching(phone, email) {
   if (typeof window === 'undefined' || !window.fbq) return;
 
@@ -38,25 +36,61 @@ export function pushAdvancedMatching(phone, email) {
 }
 
 /**
+ * Dispara o evento de ViewContent (ex: ao abrir o criador de música).
+ */
+export function trackFbViewContent({ contentName = 'Create Custom Song', currency = 'USD' } = {}) {
+  if (typeof window === 'undefined' || !window.fbq) return;
+  window.fbq('track', 'ViewContent', {
+    content_name: contentName,
+    content_type: 'product',
+    currency: currency || 'USD',
+  });
+}
+
+/**
+ * Dispara o evento de InitiateCheckout quando o cliente prossegue para o Stripe.
+ */
+export function trackFbInitiateCheckout({ orderId, value = 4.99, currency = 'USD', contentName = 'Custom Song', phone, email } = {}) {
+  if (typeof window === 'undefined' || !window.fbq) return;
+
+  pushAdvancedMatching(phone, email);
+
+  const eventId = orderId ? `initiate_${orderId}` : undefined;
+  const options = eventId ? { eventID: eventId } : undefined;
+
+  window.fbq(
+    'track',
+    'InitiateCheckout',
+    {
+      value: typeof value === 'number' && value > 0 ? value : 4.99,
+      currency: currency || 'USD',
+      content_name: contentName,
+      content_type: 'product',
+      num_items: 1,
+    },
+    options
+  );
+}
+
+/**
  * Dispara o evento de Purchase no Meta Pixel do navegador com eventID para desduplicação com a Conversions API.
  */
-export function trackFbPurchase({ orderId, value, currency = 'BRL', contentName = 'Música Homenagem Personalizada', eventId: customEventId, phone, email }) {
+export function trackFbPurchase({ orderId, value, currency = 'USD', contentName = 'Custom Song', eventId: customEventId, phone, email }) {
   if (typeof window === 'undefined' || !window.fbq || !orderId) return;
 
   pushAdvancedMatching(phone, email);
 
-  const eventId = customEventId || `purchase_${orderId}_musica`;
+  const eventId = customEventId || `purchase_${orderId}_us`;
 
   window.fbq(
     'track',
     'Purchase',
     {
-      value: typeof value === 'number' && value > 0 ? value : 9.99,
-      currency: currency || 'BRL',
+      value: typeof value === 'number' && value > 0 ? value : 4.99,
+      currency: currency || 'USD',
       content_name: contentName,
       content_type: 'product',
     },
     { eventID: eventId }
   );
 }
-
