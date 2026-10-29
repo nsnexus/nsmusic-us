@@ -6,7 +6,7 @@ export async function GET(req) {
   try {
     const env = getUsEnv(); const params = new URL(req.url).searchParams; const id = params.get('orderId'); const index = Number(params.get('track') || 0);
     const order = await requireOwnedUsOrder(req, id, env);
-    if (!isUsPaid(order)) return Response.json({ error: 'Payment confirmation is required.' }, { status: 403 });
+    if (params.get('download') === '1' && !isUsPaid(order)) return Response.json({ error: 'Payment confirmation is required to download your song.' }, { status: 403 });
     if (!Number.isInteger(index) || index < 0 || index > 9) return Response.json({ error: 'Invalid audio track.' }, { status: 400 });
     if (env.nsmusic_media) {
       const object = await env.nsmusic_media.get(usAudioKey(id, index));

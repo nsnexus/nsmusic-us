@@ -21,24 +21,31 @@ export async function getUsOrder(id, env = {}) {
 export async function requireOwnedUsOrder(request, id, env = {}) {
   const order = await getUsOrder(id, env);
   const name = usCookieName(id);
-  const cookie = (request.headers.get('cookie') || '').split(';').map(item => item.trim()).find(item => item.startsWith(name + '='));
-  const token = cookie ? cookie.substring(name.length + 1) : '';
-  if (!token || !/^[a-f0-9]{64}$/i.test(token) || await usHash(token) !== order.extras.us.ownerHash) throw usFailure('Open this order in the browser where you created it.', 403);
+  const cookie = (request?.headers?.get('cookie') || '').split(';').map(item => item.trim()).find(item => item.startsWith(name + '='));
+  let token = cookie ? cookie.substring(name.length + 1) : '';
+  if (!token && request) {
+    try {
+      const url = new URL(request.url);
+      const queryToken = url.searchParams.get('token');
+      if (queryToken) token = queryToken;
+    } catch (_) {}
+  }
+  if (!token || !/^[a-f0-9]{64}$/i.test(token) || await usHash(token) !== order.extras?.us?.ownerHash) throw usFailure('Open this order in the browser where you created it.', 403);
   return order;
 }
 
 export function publicUsOrder(order) {
   const paid = isUsPaid(order);
-  const count = paid ? (order.audioFiles?.length || (order.audioUrl ? 1 : 0)) : 0;
+  const count = order.audioFiles?.length || (order.audioUrl ? 1 : 0);
   return {
     id: order.id, orderNumber: order.orderNumber, customerName: order.customerName, honoreeName: order.honoreeName,
     lyrics: order.lyrics, story: order.story, relationship: order.relationship, occasion: order.occasion, musicStyle: order.musicStyle, paymentStatus: order.paymentStatus, paid,
-    productionStatus: order.productionStatus, sunoTaskId: order.sunoTaskId, sku: order.usPackageSku || order.extras.us.sku,
+    productionStatus: order.productionStatus, sunoTaskId: order.sunoTaskId, sku: order.usPackageSku || order.extras?.us?.sku,
     hasCartaAccess: paid && Boolean(order.hasCartaAccess), hasVideoAccess: paid && Boolean(order.hasVideoAccess), hasRetrospectivaAccess: paid && Boolean(order.hasRetrospectivaAccess),
     audioFiles: Array.from({ length: count }, (_, index) => '/api/us/audio?orderId=' + order.id + '&track=' + index),
     audioUrl: count ? '/api/us/audio?orderId=' + order.id + '&track=0' : null,
     usLetter: order.usLetter || '', usVideo: order.usVideo || null, usVideoUrl: order.usVideoUrl || '', usRetrospective: order.usRetrospective || null,
-    extras: { us: { spec: order.extras.us.spec } },
+    extras: { us: { spec: order.extras?.us?.spec } },
   };
 }
 
@@ -51,7 +58,21 @@ export async function updateUsOrder(id, updates, env = {}) {
 }
 
 export async function reserveUsGeneration(id, env = {}) {
-  const { data, error } = await usDatabase(env).rpc('us_reserve_generation', { p_id: id });
+  try {
+    const { data, error } = await usDatabase(env).rpc('us_reserve_generation', { p_id: id });
+    if (!error && typeof data === 'boolean') {
+      if (data) return true;
+      const order = await getUsOrder(id, env);
+      if (order.sunoTaskId || order.productionStatus === 'GERANDO_AUDIO') return false;
+    }
+  } catch (_) {}
+  const { data, error } = await usDatabase(env)
+    .from('orders')
+    .update({ production_status: 'GERANDO_AUDIO', suno_requested_at: new Date().toISOString() })
+    .eq('id', id)
+    .in('production_status', ['LETRA_CRIADA', 'ERRO_GERACAO'])
+    .is('suno_task_id', null)
+    .select('id');
   if (error) throw usFailure('We could not start your song. Please try again.', 503);
-  return Boolean(data);
+  return Boolean(data && data.length > 0);
 }

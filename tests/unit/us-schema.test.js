@@ -24,7 +24,8 @@ describe('US schema and atomic payment integration', () => {
     expect(result.rows[0]).toEqual({sessions:false,report:false,fulfill:false});
     expect((await db.query("select relrowsecurity from pg_class where relname='orders'")).rows[0].relrowsecurity).toBe(true);
   });
-  it('cannot reserve music before payment', async () => {
+  it('reserves music before payment for created lyrics', async () => {
+    expect((await db.query('select us_reserve_generation($1) as reserved',[id])).rows[0].reserved).toBe(true);
     expect((await db.query('select us_reserve_generation($1) as reserved',[id])).rows[0].reserved).toBe(false);
   });
   it('rejects a forged catalog price in the database', async () => {
@@ -42,7 +43,6 @@ describe('US schema and atomic payment integration', () => {
     expect((await order()).extras.usPaidCents).toBe(2896);
   });
   it('reserves only one generation and atomically merges extras', async () => {
-    expect((await db.query('select us_reserve_generation($1) as ok',[id])).rows[0].ok).toBe(true);
     expect((await db.query('select us_reserve_generation($1) as ok',[id])).rows[0].ok).toBe(false);
     await db.query('select us_patch_order($1,$2)',[id,JSON.stringify({audio_files:['https://cdn1.suno.ai/test.mp3'],extras:{usLetter:'A letter'}})]);
     const current=await order();

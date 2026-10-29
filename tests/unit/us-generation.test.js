@@ -66,18 +66,17 @@ describe('paid US music', () => {
     expect(callback.toString()).not.toContain(env.KIE_WEBHOOK_SECRET);
     expect(callback.searchParams.has('secret')).toBe(false);
   });
-  it('rechecks persisted payment for internal generation and completion', async () => {
+  it('allows generation and preview polling before payment for valid owned orders', async () => {
     order.paymentStatus = 'AGUARDANDO_PAGAMENTO';
-    await expect(startPaidUsMusic(order.id, {})).rejects.toMatchObject({ status: 402 });
-    await expect(refreshPaidUsMusic(order.id, {})).rejects.toMatchObject({ status: 402 });
-    expect(fetch).not.toHaveBeenCalled();
+    fetch.mockResolvedValue(Response.json({ code: 200, data: { taskId: 'preview-task' } }));
+    expect((await startPaidUsMusic(order.id, { KIE_API_KEY: 'test-only' })).taskId).toBe('preview-task');
+    expect(fetch).toHaveBeenCalled();
   });
-  it('checks server payment for creation and listening before contacting the provider', async () => {
+  it('allows order owner to initiate and check preview without paying upfront', async () => {
     order.paymentStatus = 'AGUARDANDO_PAGAMENTO';
-    await expect(startUsMusic(request, order.id)).rejects.toMatchObject({ status: 402 });
-    await expect(getUsMusic(request, order.id)).rejects.toMatchObject({ status: 402 });
-    expect(fetch).not.toHaveBeenCalled();
-    expect(reserveUsGeneration).not.toHaveBeenCalled();
+    fetch.mockResolvedValue(Response.json({ code: 200, data: { taskId: 'preview-task-2' } }));
+    expect((await startUsMusic(request, order.id)).taskId).toBe('preview-task-2');
+    expect(reserveUsGeneration).toHaveBeenCalledWith(order.id, expect.any(Object));
   });
   it('rejects a missing ownership session before provider access', async () => {
     requireOwnedUsOrder.mockRejectedValue(Object.assign(new Error('This order is not available.'), { status: 403 }));

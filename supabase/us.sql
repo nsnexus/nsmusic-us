@@ -34,7 +34,7 @@ language plpgsql security definer set search_path=public as $$
 begin
   update orders set production_status='GERANDO_AUDIO', suno_requested_at=now(), updated_at=now(), suno_generation_count=suno_generation_count+1
   where id=p_id and deleted_at is null and extras->'us'->>'market'='US'
-    and payment_status in ('PAGO','PAGAMENTO_APROVADO') and suno_task_id is null
+    and suno_task_id is null
     and production_status in ('LETRA_CRIADA','ERRO_GERACAO');
   return found;
 end $$;

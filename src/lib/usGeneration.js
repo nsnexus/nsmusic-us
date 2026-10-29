@@ -121,11 +121,9 @@ async function addUsMusicCallback(payload, orderId, env) {
   return { ...payload, callBackUrl: callback.toString() };
 }
 
-async function paidOrder(request, orderId, env) {
+async function ownedOrder(request, orderId, env) {
   if (typeof orderId !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(orderId)) throw usError('A valid order ID is required.');
-  const order = await requireOwnedUsOrder(request, orderId, env);
-  if (!['PAGAMENTO_APROVADO', 'PAGO'].includes(order.paymentStatus)) throw usError('Complete your payment before creating or listening to your song.', 402);
-  return order;
+  return requireOwnedUsOrder(request, orderId, env);
 }
 
 function protectedTracks(orderId, tracks) {
@@ -142,25 +140,23 @@ function existingMusic(order) {
 
 export async function startUsMusic(request, orderId) {
   const env = await getUsEnv();
-  await paidOrder(request, orderId, env);
-  return startPaidUsMusic(orderId, env);
+  const order = await ownedOrder(request, orderId, env);
+  return startPaidUsMusic(order.id, env);
 }
 
-async function internalPaidOrder(orderId, env) {
-  const order = await getUsOrder(orderId, env);
-  if (!['PAGAMENTO_APROVADO', 'PAGO'].includes(order.paymentStatus)) throw usError('Complete your payment before creating or listening to your song.', 402);
-  return order;
+async function internalOrder(orderId, env) {
+  return getUsOrder(orderId, env);
 }
 
 export async function startPaidUsMusic(orderId, env) {
-  const order = await internalPaidOrder(orderId, env);
+  const order = await internalOrder(orderId, env);
   const existing = existingMusic(order);
   if (existing) return existing;
   const key = value(env, 'KIE_API_KEY');
   if (!key) throw usError('The music service is not configured yet.', 503);
   const payload = await addUsMusicCallback(buildUsMusicPayload(order), order.id, env);
   if (!await reserveUsGeneration(order.id, env)) {
-    const current = await internalPaidOrder(orderId, env);
+    const current = await internalOrder(orderId, env);
     return existingMusic(current) || { status: 'PROCESSING', tracks: [] };
   }
   let response;
@@ -184,12 +180,12 @@ export async function startPaidUsMusic(orderId, env) {
 
 export async function getUsMusic(request, orderId) {
   const env = await getUsEnv();
-  await paidOrder(request, orderId, env);
-  return refreshPaidUsMusic(orderId, env);
+  const order = await ownedOrder(request, orderId, env);
+  return refreshPaidUsMusic(order.id, env);
 }
 
 export async function refreshPaidUsMusic(orderId, env) {
-  const order = await internalPaidOrder(orderId, env);
+  const order = await internalOrder(orderId, env);
   const existing = existingMusic(order);
   if (existing?.status === 'COMPLETED' && order.usArchivePending && env.nsmusic_media) {
     const archived = await archiveUsTracks(order.id, normalizeUsTracks(order.audioFiles), env);
