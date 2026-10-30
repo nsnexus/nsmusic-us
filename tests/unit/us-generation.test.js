@@ -90,7 +90,7 @@ describe('paid US music', () => {
     expect(url).toBe('https://api.kie.ai/api/v1/jobs/createTask');
     const payload = JSON.parse(options.body);
     expect(payload).toEqual(buildUsMusicPayload(order));
-    expect(payload.input).toMatchObject({ model: 'V6', custom_mode: true, instrumental: false, lyrics });
+    expect(payload.input).toMatchObject({ model: 'V6', custom_mode: true, instrumental: false, prompt: lyrics, lyrics });
     expect(payload.input.style).toContain('US English');
     expect(payload.input.style).not.toContain('brazilian');
     expect(updateUsOrder).toHaveBeenCalledWith(order.id, expect.objectContaining({ sunoTaskId: 'task-123' }), expect.any(Object));
@@ -134,5 +134,13 @@ describe('paid US music', () => {
     fetch.mockResolvedValue(Response.json({ code: 200, data: { state: 'fail', failMsg: 'private provider message' } }));
     expect(await getUsMusic(request, order.id)).toMatchObject({ status: 'ERROR', error: 'Your song could not be completed. Please contact support.' });
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it('returns explicit error message when generation failed instead of saying not submitted yet', async () => {
+    order.productionStatus = 'ERRO_GERACAO';
+    order.sunoError = 'Music provider rejected submission.';
+    delete order.sunoTaskId;
+    const result = await getUsMusic(request, order.id);
+    expect(result).toMatchObject({ status: 'ERROR', error: 'Music provider rejected submission.' });
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

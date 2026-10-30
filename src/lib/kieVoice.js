@@ -31,7 +31,7 @@ export function buildVoiceSongPayload({ voiceId, prompt, style = 'Acoustic Pop',
   return {
     model: 'ai-music-api/generate', callBackUrl,
     input: {
-      custom_mode: true, instrumental: false, model: 'V6', lyrics: prompt, style,
+      custom_mode: true, instrumental: false, model: 'V6', prompt, lyrics: prompt, style,
       title: String(title).substring(0, 80), persona_id: voiceId, persona_model: 'voice_persona',
       style_weight: 0.85, weirdness_constraint: 0.20,
     },

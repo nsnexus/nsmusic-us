@@ -52,9 +52,13 @@ export function publicUsOrder(order) {
 export async function updateUsOrder(id, updates, env = {}) {
   const patch = mapOrderUpdatesToSupabase(updates);
   if (patch._extraFields) { patch.extras = patch._extraFields; delete patch._extraFields; }
-  const { data, error } = await usDatabase(env).rpc('us_patch_order', { p_id: id, p_patch: patch });
-  if (error || !data) throw usFailure('Your changes could not be saved. Please try again.', 503);
-  return data;
+  try {
+    const { data, error } = await usDatabase(env).rpc('us_patch_order', { p_id: id, p_patch: patch });
+    if (!error && data) return data;
+  } catch (_) {}
+  const { error: updateError } = await usDatabase(env).from('orders').update(patch).eq('id', id);
+  if (updateError) throw usFailure('Your changes could not be saved. Please try again.', 503);
+  return true;
 }
 
 export async function reserveUsGeneration(id, env = {}) {

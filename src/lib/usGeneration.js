@@ -97,7 +97,7 @@ export function buildUsMusicPayload(order) {
   const vocals = { male: 'male lead vocal', female: 'female lead vocal', duet: 'male and female duet', any: 'expressive lead vocal' };
   const moods = ['joyful', 'heartfelt', 'romantic', 'uplifting', 'nostalgic', 'calm', 'celebratory', 'emotional', 'energetic', 'hopeful'];
   const mood = moods.includes(spec.mood.toLowerCase()) ? spec.mood.toLowerCase() : 'heartfelt';
-  return { model: 'ai-music-api/generate', input: { model: 'V6', custom_mode: true, instrumental: false, lyrics: order.lyrics, style: `${genre.prompt}, ${mood}, ${vocals[spec.vocals || 'any']}, US English lyrics, studio quality`, title: `For ${spec.recipientName}`.slice(0, 80), style_weight: 0.75, weirdness_constraint: 0.2 } };
+  return { model: 'ai-music-api/generate', input: { model: 'V6', custom_mode: true, instrumental: false, prompt: order.lyrics, lyrics: order.lyrics, style: `${genre.prompt}, ${mood}, ${vocals[spec.vocals || 'any']}, US English lyrics, studio quality`, title: `For ${spec.recipientName}`.slice(0, 80), style_weight: 0.75, weirdness_constraint: 0.2 } };
 }
 
 export async function usMusicCallbackSignature(orderId, env) {
@@ -170,9 +170,11 @@ export async function startPaidUsMusic(orderId, env) {
   }
   const taskId = data?.data?.taskId;
   if (!response.ok || Number(data.code) !== 200 || typeof taskId !== 'string' || !taskId.trim()) {
-    const definitive = (response.status >= 400 && response.status < 500) || (Number(data.code) >= 400 && Number(data.code) < 500);
-    await updateUsOrder(order.id, { productionStatus: definitive ? 'ERRO_GERACAO' : 'US_GENERATION_REVIEW', sunoError: definitive ? 'Music provider rejected submission.' : 'Submission confirmation unavailable; check provider before retrying.' }, env);
-    throw usError(definitive ? 'The music service could not accept this song. Please try again later.' : 'We could not confirm your song submission. Please contact support before trying again.', 502);
+    console.error('[us-generation] Kie.ai error:', response?.status, data);
+    const providerMsg = data?.msg || data?.message || data?.error;
+    const definitive = (response?.status >= 400 && response?.status < 500) || (Number(data?.code) >= 400 && Number(data?.code) < 500);
+    await updateUsOrder(order.id, { productionStatus: definitive ? 'ERRO_GERACAO' : 'US_GENERATION_REVIEW', sunoError: providerMsg || (definitive ? 'Music provider rejected submission.' : 'Submission confirmation unavailable; check provider before retrying.') }, env);
+    throw usError(definitive ? (providerMsg || 'The music service could not accept this song. Please try again later.') : 'We could not confirm your song submission. Please contact support before trying again.', 502);
   }
   await updateUsOrder(order.id, { sunoTaskId: taskId, sunoProvider: 'kie', productionStatus: 'GERANDO_AUDIO', sunoRequestedAt: new Date().toISOString(), sunoError: null }, env);
   return { status: 'PROCESSING', taskId, tracks: [] };
@@ -194,6 +196,12 @@ export async function refreshPaidUsMusic(orderId, env) {
   if (existing?.status === 'COMPLETED' || existing?.status === 'ERROR') return existing;
   if (!order.sunoTaskId) {
     if (order.productionStatus === 'GERANDO_AUDIO') return { status: 'PROCESSING', tracks: [] };
+    if (order.productionStatus === 'ERRO_GERACAO') {
+      return { status: 'ERROR', tracks: [], error: order.sunoError || 'Music generation failed. Please try again.' };
+    }
+    if (order.productionStatus === 'US_GENERATION_REVIEW') {
+      return { status: 'ERROR', tracks: [], error: order.sunoError || 'Your song request needs a support check before it can be submitted again.' };
+    }
     return { status: 'ERROR', tracks: [], error: 'Your song has not been submitted yet.' };
   }
   const key = value(env, 'KIE_API_KEY');
