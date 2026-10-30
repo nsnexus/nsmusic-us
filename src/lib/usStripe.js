@@ -21,7 +21,7 @@ export const retrieveUsSession = (id, env) => stripe('checkout/sessions/' + enco
 export function usCheckoutForm(order, sku, origin) {
   const pack = getUsPackage(sku);
   if (!pack) throw usFailure('Please choose one of the four available packages.', 400);
-  return new URLSearchParams({
+  const params = {
     mode: 'payment', locale: 'en', 'payment_method_types[0]': 'card',
     'line_items[0][price_data][currency]': 'usd',
     'line_items[0][price_data][unit_amount]': String(pack.priceCents),
@@ -29,10 +29,13 @@ export function usCheckoutForm(order, sku, origin) {
     'line_items[0][quantity]': '1', client_reference_id: order.id,
     'metadata[orderId]': order.id, 'metadata[sku]': sku, 'metadata[market]': 'US',
     'payment_intent_data[metadata][orderId]': order.id, 'payment_intent_data[metadata][market]': 'US',
-    customer_email: order.customerEmail,
     success_url: origin + '/delivery?orderId=' + encodeURIComponent(order.id) + '&session_id={CHECKOUT_SESSION_ID}',
     cancel_url: origin + '/delivery?orderId=' + encodeURIComponent(order.id) + '&cancelled=1',
-  });
+  };
+  if (order.customerEmail && String(order.customerEmail).trim()) {
+    params.customer_email = String(order.customerEmail).trim();
+  }
+  return new URLSearchParams(params);
 }
 export async function createUsCheckout(order, sku, env) {
   const pack = getUsPackage(sku);

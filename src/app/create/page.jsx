@@ -409,17 +409,16 @@ export default function CreatePage() {
                 </div>
 
                 <label className="us-field">
-                  Your email
+                  Your email (optional)
                   <input
                     type="email"
-                    required
                     autoComplete="email"
                     maxLength={254}
                     value={form.customerEmail}
                     onChange={(e) => update('customerEmail', e.target.value)}
-                    placeholder="you@example.com"
+                    placeholder="you@example.com (optional)"
                   />
-                  <span className="us-field-hint">Used to save your order and access your song studio.</span>
+                  <span className="us-field-hint">Optional. Used to send a backup access link for your song studio.</span>
                 </label>
                 <div className="us-field">
                   <label htmlFor="us-phone-input">
