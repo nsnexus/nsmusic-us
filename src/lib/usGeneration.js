@@ -202,6 +202,9 @@ export async function refreshPaidUsMusic(orderId, env) {
     if (order.productionStatus === 'US_GENERATION_REVIEW') {
       return { status: 'ERROR', tracks: [], error: order.sunoError || 'Your song request needs a support check before it can be submitted again.' };
     }
+    if (order.productionStatus === 'LETRA_CRIADA') {
+      return { status: 'PROCESSING', tracks: [] };
+    }
     return { status: 'ERROR', tracks: [], error: 'Your song has not been submitted yet.' };
   }
   const key = value(env, 'KIE_API_KEY');

@@ -133,11 +133,21 @@ export default function DeliveryPage() {
 
         setPhase('generating');
         try {
-          await api('/api/us/music', { orderId: id }, signal);
-        } catch (_) {}
+          const startRes = await api('/api/us/music', { orderId: id }, signal);
+          if (startRes?.status === 'ERROR') {
+            throw new Error(startRes.error || 'Could not start music generation.');
+          }
+        } catch (startErr) {
+          if (startErr.name !== 'AbortError' && active) {
+            console.error('[us-delivery] Music generation start error:', startErr);
+            setError(startErr.message || 'Could not start music generation.');
+            setPhase('error');
+            return;
+          }
+        }
 
         for (let attempt = 0; attempt < 45; attempt++) {
-          if (attempt) await wait(Math.min(4000 + attempt * 1500, 15000));
+          await wait(attempt === 0 ? 3000 : Math.min(4000 + attempt * 1500, 15000));
           const result = await api('/api/us/music?orderId=' + encodeURIComponent(id), null, signal);
           if (!active) return;
           if (result.status === 'ERROR') throw new Error(result.error || 'Your song needs another attempt. Your order is saved; use Retry to check again.');

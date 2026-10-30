@@ -100,6 +100,12 @@ export default function CreatePage() {
     setBusy(true);
     controller.current = new AbortController();
     try {
+      const rawDigits = (form.customerPhone || '').replace(/\D/g, '');
+      if (!rawDigits || rawDigits.length < 8) {
+        setError('Please enter your WhatsApp phone number.');
+        setBusy(false);
+        return;
+      }
       let id = orderId;
       const formattedPhone =
         form.customerPhone && form.customerPhone.trim()
@@ -422,7 +428,7 @@ export default function CreatePage() {
                 </label>
                 <div className="us-field">
                   <label htmlFor="us-phone-input">
-                    WhatsApp (optional){' '}
+                    WhatsApp (required) *{' '}
                     <span className="us-field-hint" style={{ display: 'inline', marginLeft: 4 }}>
                       Receive your song preview link directly on WhatsApp
                     </span>
@@ -449,6 +455,7 @@ export default function CreatePage() {
                     <input
                       id="us-phone-input"
                       type="tel"
+                      required
                       autoComplete="tel"
                       placeholder={(form.countryCode || '+1').startsWith('+1') ? '(555) 000-0000' : 'Mobile number'}
                       value={form.customerPhone || ''}

@@ -15,6 +15,11 @@ export async function POST(req) {
     }
     const email = typeof body.customerEmail === 'string' ? body.customerEmail.trim() : '';
     const phone = typeof body.customerPhone === 'string' ? body.customerPhone.trim() : '';
+    const phoneDigits = phone.replace(/\D/g, '');
+
+    if (!phone || phoneDigits.length < 8) {
+      return NextResponse.json({ error: 'Please enter a valid WhatsApp phone number.' }, { status: 400 });
+    }
 
     if (email && (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254)) {
       return NextResponse.json({ error: 'Please enter a valid email address.' }, { status: 400 });

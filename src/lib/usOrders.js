@@ -56,7 +56,7 @@ export async function updateUsOrder(id, updates, env = {}) {
     const { data, error } = await usDatabase(env).rpc('us_patch_order', { p_id: id, p_patch: patch });
     if (!error && data) return data;
   } catch (_) {}
-  const { error: updateError } = await usDatabase(env).from('orders').update(patch).eq('id', id);
+  const { error: updateError } = await usDatabase(env).from('orders').eq('id', id).update(patch);
   if (updateError) throw usFailure('Your changes could not be saved. Please try again.', 503);
   return true;
 }
@@ -72,11 +72,10 @@ export async function reserveUsGeneration(id, env = {}) {
   } catch (_) {}
   const { data, error } = await usDatabase(env)
     .from('orders')
-    .update({ production_status: 'GERANDO_AUDIO', suno_requested_at: new Date().toISOString() })
     .eq('id', id)
-    .in('production_status', ['LETRA_CRIADA', 'ERRO_GERACAO'])
+    .in('production_status', ['LETRA_CRIADA', 'ERRO_GERACAO', 'US_GENERATION_REVIEW'])
     .is('suno_task_id', null)
-    .select('id');
+    .update({ production_status: 'GERANDO_AUDIO', suno_requested_at: new Date().toISOString() });
   if (error) throw usFailure('We could not start your song. Please try again.', 503);
   return Boolean(data && data.length > 0);
 }
