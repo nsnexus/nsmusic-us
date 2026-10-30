@@ -1,6 +1,76 @@
 import Link from 'next/link';
+import Image from 'next/image';
 import '../../app/us.css';
-export function Brand() { return <Link className="us-brand" href="/" aria-label="NS Music home"><span className="us-brand-icon">♫</span> NS Music<span className="us-brand-small">THE PERSONAL SONG STUDIO</span></Link>; }
-export function Shell({ children }) { return <div className="us-site"><header className="us-header"><Brand/><nav aria-label="Main navigation"><Link href="/#how-it-works">The process</Link><Link href="/#collection">The collection</Link><Link className="us-nav-cta" href="/create">Make their song <span>↗</span></Link></nav></header>{children}<footer className="us-footer"><div><Brand/><p>A little story. A lasting feeling.</p></div><div className="us-footer-links"><Link href="/terms">Terms</Link><Link href="/privacy">Privacy</Link><Link href="/admin">Studio access</Link><span>© {new Date().getFullYear()} NS Music</span></div></footer></div>; }
-export function RecordArt({small=false}) { return <div className={`us-record-art ${small?'us-record-small':''}`} aria-label="Illustrated personalized record sleeve"><div className="us-record"></div><div className="us-record-sleeve"><div className="us-sleeve-top">NS / MUSIC<span>ONE OF A KIND</span></div><div className="us-sleeve-flower">✳</div><div className="us-sleeve-title">All the little<br/><i>things.</i></div><div className="us-sleeve-bottom">YOUR STORY, IN SONG.<span>VOL. 01</span></div></div><span className="us-art-note">For the person who means everything.</span></div>; }
 
+export function Brand() {
+  return (
+    <Link className="us-brand" href="/" aria-label="NS Music home">
+      <Image
+        src="/logo.png"
+        alt="NS Music"
+        width={38}
+        height={38}
+        priority
+        style={{ borderRadius: '10px', objectFit: 'contain' }}
+      />
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span>NS Music</span>
+        </div>
+        <span className="us-brand-small">THE PERSONAL SONG STUDIO</span>
+      </div>
+    </Link>
+  );
+}
+
+export function Shell({ children }) {
+  return (
+    <div className="us-site">
+      <header className="us-header">
+        <Brand />
+        <nav aria-label="Main navigation">
+          <Link href="/#how-it-works">The process</Link>
+          <Link href="/#collection">The collection</Link>
+          <Link className="us-nav-cta" href="/create">
+            Make their song <span>↗</span>
+          </Link>
+        </nav>
+      </header>
+      {children}
+      <footer className="us-footer">
+        <div>
+          <Brand />
+          <p>A little story. A lasting feeling.</p>
+        </div>
+        <div className="us-footer-links">
+          <Link href="/terms">Terms</Link>
+          <Link href="/privacy">Privacy</Link>
+          <Link href="/admin">Studio access</Link>
+          <span>© {new Date().getFullYear()} NS Music</span>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+export function RecordArt({ small = false }) {
+  return (
+    <div className={`us-record-art ${small ? 'us-record-small' : ''}`} aria-label="Illustrated personalized record sleeve">
+      <div className="us-record"></div>
+      <div className="us-record-sleeve">
+        <div className="us-sleeve-top">
+          NS / MUSIC<span>ONE OF A KIND</span>
+        </div>
+        <div className="us-sleeve-flower">♪</div>
+        <div className="us-sleeve-title">
+          All the little<br />
+          <i>things.</i>
+        </div>
+        <div className="us-sleeve-bottom">
+          YOUR STORY, IN SONG.<span>VOL. 01</span>
+        </div>
+      </div>
+      <span className="us-art-note">For the person who means everything.</span>
+    </div>
+  );
+}
