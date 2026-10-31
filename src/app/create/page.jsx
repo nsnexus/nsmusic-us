@@ -41,7 +41,8 @@ export default function CreatePage() {
     [lyrics, setLyrics] = useState(''),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
-    [orderId, setOrderId] = useState('');
+    [orderId, setOrderId] = useState(''),
+    [isRestored, setIsRestored] = useState(false);
 
   const heading = useRef(null),
     mounted = useRef(true),
@@ -50,11 +51,47 @@ export default function CreatePage() {
   useEffect(() => {
     mounted.current = true;
     trackFbViewContent();
+
+    if (typeof window !== 'undefined') {
+      try {
+        const p = new URLSearchParams(window.location.search);
+        if (p.get('reset') === '1' || p.get('new') === '1') {
+          localStorage.removeItem('ns_us_order_draft');
+        } else {
+          const saved = localStorage.getItem('ns_us_order_draft');
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            if (parsed.form) setForm((prev) => ({ ...prev, ...parsed.form }));
+            if (parsed.lyrics) setLyrics(parsed.lyrics);
+            if (parsed.orderId) setOrderId(parsed.orderId);
+            if (typeof parsed.step === 'number' && parsed.step >= 0 && parsed.step <= 3) {
+              setStep(parsed.step);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Draft restore warning:', e);
+      } finally {
+        setIsRestored(true);
+      }
+    }
+
     return () => {
       mounted.current = false;
       controller.current?.abort();
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && isRestored) {
+      try {
+        localStorage.setItem(
+          'ns_us_order_draft',
+          JSON.stringify({ step, form, lyrics, orderId })
+        );
+      } catch (_) {}
+    }
+  }, [step, form, lyrics, orderId, isRestored]);
 
   useEffect(() => {
     heading.current?.focus();
@@ -136,6 +173,9 @@ export default function CreatePage() {
           email: form.customerEmail,
           phone: formattedPhone,
         });
+      } catch (_) {}
+      try {
+        localStorage.removeItem('ns_us_order_draft');
       } catch (_) {}
       if (mounted.current) window.location.assign('/delivery?orderId=' + encodeURIComponent(id));
     } catch (e) {
