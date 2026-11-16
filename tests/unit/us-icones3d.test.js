@@ -24,3 +24,12 @@ describe('ícones 3D (loja internacional)', () => {
     expect(iconeDoRitmo('ritmo-que-nao-existe')).toBe('/icons/3d/musical-note.webp');
   });
 });
+
+describe('Reino Unido e bandeiras', () => {
+  it('Reino Unido está nos países padrão, em inglês, com ritmos e bandeira em imagem', () => {
+    const gb = DEFAULT_COUNTRIES.find((c) => c.code === 'GB');
+    expect(gb).toMatchObject({ language: 'en', active: true });
+    expect(gb.genres.length).toBeGreaterThanOrEqual(6);
+    for (const c of DEFAULT_COUNTRIES) expect(existe(`/flags/${c.code.toLowerCase()}.svg`)).toBe(true);
+  });
+});

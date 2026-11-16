@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { onAuthStateChanged, auth, getAdminAuthToken } from '@/lib/authClient';
+import Bandeira from '@/components/us/Bandeira';
 
 // Painel: países atendidos pela loja internacional e os ritmos de cada um.
 // A checagem de e-mail aqui é só conveniência de tela — quem autoriza é a rota /api/admin/countries.
@@ -106,7 +107,7 @@ export default function PaisesPage() {
         <section key={p.code} style={card}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
             <button type="button" onClick={() => setAberto(aberto === p.code ? '' : p.code)} style={{ ...btn, border: 'none', padding: 0, background: 'none', fontSize: '1.05rem' }} aria-expanded={aberto === p.code}>
-              {p.flag} {p.name} <span style={{ color: '#94a3b8', fontWeight: 500 }}>({p.code} · {IDIOMAS[p.language]} · {p.genres.filter((g) => g.enabled).length} ritmos)</span>
+              <Bandeira code={p.code} size={16} /> {p.name} <span style={{ color: '#94a3b8', fontWeight: 500 }}>({p.code} · {IDIOMAS[p.language]} · {p.genres.filter((g) => g.enabled).length} ritmos)</span>
             </button>
             <label style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', fontWeight: 700 }}>
               <input type="checkbox" checked={p.active} onChange={(e) => alterarPais(i, 'active', e.target.checked)} /> Ativo

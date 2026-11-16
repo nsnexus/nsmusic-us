@@ -87,6 +87,8 @@ export const ICONES_RITMO = {
   folk: 'banjo', christian: 'dove', gospel: 'church', latin: 'maracas', jazz: 'musical-keyboard',
   'classic-rock': 'guitar', 'hiphop-rnb': 'headphone', indie: 'cherry-blossom', 'aussie-rock': 'guitar',
   'aussie-country': 'cowboy', dance: 'mirror-ball',
+  'uk-pop': 'microphone', britpop: 'guitar', 'uk-ballad': 'musical-keyboard', 'uk-soul': 'saxophone',
+  'uk-rock': 'guitar', 'uk-dance': 'mirror-ball', 'uk-rap': 'headphone',
   banda: 'trumpet', norteno: 'accordion', mariachi: 'violin', balada: 'musical-keyboard', 'pop-latino': 'microphone',
   cumbia: 'maracas', bachata: 'guitar', reggaeton: 'headphone', bolero: 'red-heart', cristiana: 'dove',
 };

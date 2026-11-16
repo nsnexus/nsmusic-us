@@ -6,6 +6,7 @@ import { textos, PHONE_PREFIX } from '@/lib/usI18n';
 import { trackFbViewContent, trackFbInitiateCheckout } from '@/lib/metaPixel';
 import { iconeDoRitmo } from '@/lib/icones3d';
 import Icone3D from './Icone3D';
+import Bandeira from './Bandeira';
 import './wizard.css';
 
 // Passo a passo de criação no mesmo formato do site brasileiro, em inglês ou espanhol conforme o país.
@@ -58,7 +59,7 @@ function CountryPopup({ countries, value, onPick }) {
           {countries.map((c) => (
             <button key={c.code} type="button" onClick={() => setSel(c.code)} aria-pressed={sel === c.code}
               className={`usw-chip ${sel === c.code ? 'on' : ''}`} style={{ borderRadius: '14px', display: 'flex', alignItems: 'center', gap: '10px', textAlign: 'left' }}>
-              <span style={{ fontSize: '1.4rem' }} aria-hidden="true">{c.flag}</span>{c.name}
+              <Bandeira code={c.code} size={20} />{c.name}
             </button>
           ))}
         </div>
@@ -183,7 +184,10 @@ export default function CreateWizard() {
     setBusy(true); setError('');
     controller.current?.abort();
     controller.current = new AbortController();
-    const telefone = form.customerPhone.trim().startsWith('+') ? form.customerPhone.trim() : `${PHONE_PREFIX[form.country] || '+1'} ${form.customerPhone.trim()}`;
+    // No Reino Unido e na Austrália o número nacional começa com 0 (07911…), que some com o código do país.
+    const telefone = form.customerPhone.trim().startsWith('+')
+      ? form.customerPhone.trim()
+      : `${PHONE_PREFIX[form.country] || '+1'} ${form.customerPhone.trim().replace(/^0+/, '')}`;
     try {
       let id = orderId;
       if (!id) {
@@ -238,7 +242,7 @@ export default function CreateWizard() {
           <span style={{ fontWeight: 800, color: '#64748b', fontSize: '0.9rem' }}>{t.stepOf(step, TOTAL)}</span>
           {country && (
             <button type="button" onClick={() => setAskCountry(true)} style={{ border: '1px solid #e7e2ef', background: '#fff', borderRadius: '999px', padding: '4px 10px', fontSize: '0.8rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-              {country.flag} {t.country.change}
+              <Bandeira code={country.code} size={13} /> {t.country.change}
             </button>
           )}
         </div>
@@ -355,7 +359,7 @@ export default function CreateWizard() {
             <p style={S.sub}>{t.contact.subtitle}</p>
             <label style={S.label} htmlFor="wz-phone">{t.contact.phone}</label>
             <div style={{ display: 'flex', gap: '8px' }}>
-              <span style={{ ...S.input, width: 'auto', flex: '0 0 auto', color: '#6b6474' }}>{country?.flag} {PHONE_PREFIX[form.country] || '+1'}</span>
+              <span style={{ ...S.input, width: 'auto', flex: '0 0 auto', color: '#6b6474', display: 'inline-flex', alignItems: 'center', gap: '6px' }}><Bandeira code={country?.code} size={15} /> {PHONE_PREFIX[form.country] || '+1'}</span>
               <input id="wz-phone" type="tel" inputMode="tel" autoComplete="tel-national" style={S.input} maxLength={30} placeholder={t.contact.phonePh} value={form.customerPhone} onChange={(e) => set('customerPhone', e.target.value)} />
             </div>
             <label style={S.label} htmlFor="wz-email">{t.contact.email}</label>

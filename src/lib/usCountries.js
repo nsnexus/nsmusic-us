@@ -50,6 +50,20 @@ export const DEFAULT_COUNTRIES = [
     ],
   },
   {
+    code: 'GB', name: 'United Kingdom', flag: '🇬🇧', language: 'en', active: true,
+    genres: [
+      g('uk-pop', 'Pop', 'Bright, catchy and made to sing along.', 'Contemporary British pop, polished melodic hooks, warm piano and guitars, clear expressive vocals, uplifting chorus'),
+      g('britpop', 'Indie / Britpop', 'Jangly guitars and a big-hearted chorus.', 'Britpop and British indie rock, jangly electric guitars, driving drums, anthemic singalong chorus, warm heartfelt vocals'),
+      g('uk-ballad', 'Piano Ballad', 'Just a piano and a voice that means it.', 'Intimate British piano ballad, emotive piano and soft strings, tender soulful vocals, building to an emotional chorus'),
+      g('uk-soul', 'Soul / R&B', 'Smooth, warm and full of feeling.', 'Modern British soul and R&B, warm Rhodes keys, smooth groove, rich soulful vocals, clean lyrics'),
+      fromUs('folk'),
+      g('uk-rock', 'Rock', 'Big guitars with a classic British edge.', 'Melodic British rock, overdriven electric guitars, live drums, anthemic heartfelt chorus'),
+      g('uk-dance', 'Dance / Electronic', 'Feel-good beats for the celebration.', 'Feel-good British dance pop, warm synths, four-on-the-floor beat, euphoric uplifting chorus, clean vocals'),
+      g('uk-rap', 'UK Rap', 'Your story with rhythm, kept clean.', 'Clean melodic UK rap, smooth beat, warm keys, thoughtful heartfelt rhythmic delivery, no explicit language'),
+      fromUs('christian'),
+    ],
+  },
+  {
     code: 'MX', name: 'México', flag: '🇲🇽', language: 'es', active: true,
     genres: [
       g('banda', 'Regional Mexicano (Banda)', 'Metales, tambora y mucho sentimiento.', 'Regional Mexican banda sinaloense, brass section, tuba, tambora, heartfelt romantic Spanish vocals, festive emotional chorus'),

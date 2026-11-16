@@ -6,9 +6,9 @@ import { usCheckoutForm } from '@/lib/usStripe';
 const base = { story: 'Ella siempre hizo que cada cumpleaños fuera especial para todos.', recipientName: 'Sofía', senderName: 'Carlos', relationship: 'Mamá', occasion: 'Cumpleaños', mood: 'Heartfelt', vocals: 'female' };
 
 describe('países e ritmos', () => {
-  it('padrão tem EUA, Canadá, Austrália em inglês e México em espanhol', () => {
+  it('padrão tem EUA, Canadá, Austrália e Reino Unido em inglês e México em espanhol', () => {
     const idiomas = Object.fromEntries(DEFAULT_COUNTRIES.map((c) => [c.code, c.language]));
-    expect(idiomas).toEqual({ US: 'en', CA: 'en', AU: 'en', MX: 'es' });
+    expect(idiomas).toEqual({ US: 'en', CA: 'en', AU: 'en', GB: 'en', MX: 'es' });
     expect(() => sanitizeCountries(DEFAULT_COUNTRIES)).not.toThrow();
   });
 

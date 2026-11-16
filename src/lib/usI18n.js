@@ -1,7 +1,7 @@
 // Textos do fluxo de criação em inglês e espanhol (México).
 // Os valores enviados ao servidor (mood, vocals) ficam em inglês; só os rótulos mudam.
 
-export const PHONE_PREFIX = { US: '+1', CA: '+1', AU: '+61', MX: '+52' };
+export const PHONE_PREFIX = { US: '+1', CA: '+1', AU: '+61', GB: '+44', MX: '+52' };
 
 export const T = {
   en: {
