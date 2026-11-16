@@ -8,12 +8,23 @@ export function usSiteUrl(env = {}) {
   if (url.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(url.hostname)) throw usFailure('A secure site URL is required.', 503);
   return url.origin;
 }
+export const STRIPE_API_VERSION = '2025-03-31.basil';
+
 async function stripe(path, env, options = {}) {
   const key = env.STRIPE_SECRET_KEY || process.env.STRIPE_SECRET_KEY;
   if (!key) throw usFailure('Secure checkout is not configured yet.', 503);
-  const res = await fetch('https://api.stripe.com/v1/' + path, { ...options, headers: { Authorization: 'Bearer ' + key, ...options.headers }, signal: AbortSignal.timeout(15000) });
+  // Versão da API fixada: a partir da 2026-03-25.dahlia a Stripe renomeou os valores de ui_mode
+  // ('embedded' → 'embedded_page') e passou a recusar o valor antigo. Sem fixar, a conta usa a versão
+  // padrão dela e o checkout embutido quebra quando essa versão muda.
+  const res = await fetch('https://api.stripe.com/v1/' + path, { ...options, headers: { Authorization: 'Bearer ' + key, 'Stripe-Version': STRIPE_API_VERSION, ...options.headers }, signal: AbortSignal.timeout(15000) });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw usFailure('Stripe is temporarily unavailable. Please try again.', 502);
+  if (!res.ok) {
+    // Só o tipo/código do erro (nunca a mensagem da Stripe) vai para o log e para o cliente, para dar
+    // para diagnosticar sem expor detalhes internos.
+    const codigo = String(data?.error?.code || data?.error?.type || res.status).replace(/[^a-z0-9_]/gi, '').slice(0, 40);
+    console.warn('[usStripe] Stripe recusou', path.split('/')[0], codigo, data?.error?.param || '');
+    throw usFailure(`Stripe is temporarily unavailable. Please try again. (code: ${codigo})`, 502);
+  }
   return data;
 }
 export const retrieveUsSession = (id, env) => stripe('checkout/sessions/' + encodeURIComponent(id), env);
