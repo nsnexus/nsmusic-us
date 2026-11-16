@@ -3,6 +3,7 @@
 // chave; quem desenha troca pelo arquivo. Emoji sem ícone aqui continua aparecendo como emoji.
 
 export const ICONES_3D = {
+  '👑': 'crown',
   '🪗': 'accordion',
   '👶': 'baby',
   '🪕': 'banjo',
