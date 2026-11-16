@@ -4,6 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { textos, PHONE_PREFIX } from '@/lib/usI18n';
 import { trackFbViewContent, trackFbInitiateCheckout } from '@/lib/metaPixel';
+import { iconeDoRitmo } from '@/lib/icones3d';
+import Icone3D from './Icone3D';
+import './wizard.css';
 
 // Passo a passo de criação no mesmo formato do site brasileiro, em inglês ou espanhol conforme o país.
 // País e ritmos vêm de /api/us/countries; o servidor revalida tudo (país, ritmo, campos) ao gerar a letra
@@ -25,18 +28,13 @@ const roxo = '#6d28d9';
 const S = {
   wrap: { maxWidth: '640px', margin: '0 auto', padding: '18px 18px 120px' },
   progress: { display: 'flex', alignItems: 'center', gap: '12px', margin: '6px 0 22px' },
-  bar: { flex: 1, height: '7px', borderRadius: '999px', background: '#e5e7eb', overflow: 'hidden' },
+  bar: { flex: 1, height: '7px', borderRadius: '999px', background: 'rgba(30, 27, 75, 0.08)', overflow: 'hidden' },
   h1: { fontSize: 'clamp(1.7rem, 6vw, 2.3rem)', lineHeight: 1.1, margin: '0 0 6px', fontWeight: 800, letterSpacing: '-0.02em', color: '#1f1a24' },
   sub: { margin: '0 0 18px', color: '#6b6474', fontSize: '0.98rem', lineHeight: 1.5 },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '10px' },
-  card: (on) => ({ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '6px', minHeight: '92px', padding: '12px 8px', borderRadius: '16px', cursor: 'pointer', textAlign: 'center', background: on ? '#f5f3ff' : '#ffffff', border: `2px solid ${on ? roxo : '#e7e2ef'}`, color: '#1f1a24', fontWeight: 700, fontSize: '0.92rem' }),
-  chip: (on) => ({ padding: '10px 14px', borderRadius: '999px', cursor: 'pointer', border: `2px solid ${on ? roxo : '#e7e2ef'}`, background: on ? '#f5f3ff' : '#fff', color: on ? roxo : '#1f1a24', fontWeight: 700, fontSize: '0.9rem' }),
   label: { display: 'block', fontWeight: 700, fontSize: '0.9rem', color: '#1f1a24', margin: '14px 0 6px' },
   input: { width: '100%', boxSizing: 'border-box', padding: '13px 14px', borderRadius: '14px', border: '1.5px solid #d9d3e3', fontSize: '1rem', background: '#fff', color: '#1f1a24' },
-  bottom: { position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 50, background: 'rgba(255,255,255,0.96)', borderTop: '1px solid #ece8f2', padding: '12px 16px calc(12px + env(safe-area-inset-bottom))' },
   bottomIn: { maxWidth: '640px', margin: '0 auto', display: 'flex', gap: '10px' },
-  back: { flex: '0 0 auto', padding: '14px 18px', borderRadius: '999px', border: '1.5px solid #d9d3e3', background: '#fff', fontWeight: 700, fontSize: '1rem', cursor: 'pointer', color: '#1f1a24' },
-  next: (dis) => ({ flex: 1, padding: '15px 18px', borderRadius: '999px', border: 'none', background: 'linear-gradient(135deg, #4f46e5, #7c3aed)', color: '#fff', fontWeight: 700, fontSize: '1.02rem', cursor: dis ? 'wait' : 'pointer', opacity: dis ? 0.7 : 1, boxShadow: '0 10px 24px -10px rgba(109,40,217,0.6)' }),
   error: { margin: '14px 0 0', padding: '10px 12px', borderRadius: '12px', background: '#fef2f2', color: '#b91c1c', fontSize: '0.9rem' },
 };
 
@@ -59,12 +57,12 @@ function CountryPopup({ countries, value, onPick }) {
         <div style={{ display: 'grid', gap: '8px' }}>
           {countries.map((c) => (
             <button key={c.code} type="button" onClick={() => setSel(c.code)} aria-pressed={sel === c.code}
-              style={{ ...S.chip(sel === c.code), borderRadius: '14px', display: 'flex', alignItems: 'center', gap: '10px', textAlign: 'left' }}>
+              className={`usw-chip ${sel === c.code ? 'on' : ''}`} style={{ borderRadius: '14px', display: 'flex', alignItems: 'center', gap: '10px', textAlign: 'left' }}>
               <span style={{ fontSize: '1.4rem' }} aria-hidden="true">{c.flag}</span>{c.name}
             </button>
           ))}
         </div>
-        <button type="button" onClick={() => sel && onPick(sel)} style={{ ...S.next(false), width: '100%', marginTop: '16px' }}>{t.country.confirm}</button>
+        <button type="button" className="usw-next" onClick={() => sel && onPick(sel)} style={{ width: '100%', marginTop: '16px' }}>{t.country.confirm}</button>
       </div>
     </div>
   );
@@ -228,13 +226,14 @@ export default function CreateWizard() {
   }
 
   return (
-    <div lang={lang === 'es' ? 'es-MX' : 'en'}>
+    <div lang={lang === 'es' ? 'es-MX' : 'en'} style={{ position: 'relative' }}>
+      <div className="usw-amb" aria-hidden="true"><span /></div>
       {askCountry && <CountryPopup countries={countries} value={form.country || detected} onPick={pickCountry} />}
 
-      <div style={S.wrap}>
+      <div style={{ ...S.wrap, position: 'relative', zIndex: 1 }}>
         <div style={S.progress}>
           <div style={S.bar} role="progressbar" aria-valuemin={1} aria-valuemax={TOTAL} aria-valuenow={step}>
-            <div style={{ width: `${(step / TOTAL) * 100}%`, height: '100%', background: 'linear-gradient(90deg, #4f46e5, #7c3aed)', borderRadius: '999px', transition: 'width .3s' }} />
+            <div style={{ width: `${(step / TOTAL) * 100}%`, height: '100%', background: 'linear-gradient(90deg, #a78bfa, #6d28d9)', borderRadius: '999px', transition: 'width .5s cubic-bezier(0.22, 1, 0.36, 1)', boxShadow: '0 0 10px rgba(109, 40, 217, 0.45)' }} />
           </div>
           <span style={{ fontWeight: 800, color: '#64748b', fontSize: '0.9rem' }}>{t.stepOf(step, TOTAL)}</span>
           {country && (
@@ -245,17 +244,17 @@ export default function CreateWizard() {
         </div>
 
         {step === 1 && (
-          <section>
+          <section className="usw-step">
             <h1 ref={heading} tabIndex={-1} style={S.h1}>{t.who.title}</h1>
             <p style={S.sub}>{t.who.subtitle}</p>
-            <div style={S.grid}>
+            <div className="usw-grid" style={S.grid}>
               {t.who.cards.map(([emoji, label, value]) => (
-                <button key={value} type="button" style={S.card(form.relationship === value)} aria-pressed={form.relationship === value} onClick={() => set('relationship', value)}>
-                  <span style={{ fontSize: '1.8rem' }} aria-hidden="true">{emoji}</span>{label}
+                <button key={value} type="button" className={`usw-card ${form.relationship === value ? 'on' : ''}`} aria-pressed={form.relationship === value} onClick={() => set('relationship', value)}>
+                  <Icone3D emoji={emoji} prioridade /><span className="usw-lb">{label}</span>
                 </button>
               ))}
-              <button type="button" style={S.card(form.relationship === '__other')} aria-pressed={form.relationship === '__other'} onClick={() => set('relationship', '__other')}>
-                <span style={{ fontSize: '1.8rem' }} aria-hidden="true">✨</span>{t.who.other}
+              <button type="button" className={`usw-card ${form.relationship === '__other' ? 'on' : ''}`} aria-pressed={form.relationship === '__other'} onClick={() => set('relationship', '__other')}>
+                <Icone3D emoji="✨" prioridade /><span className="usw-lb">{t.who.other}</span>
               </button>
             </div>
             {form.relationship === '__other' && (
@@ -270,14 +269,14 @@ export default function CreateWizard() {
         )}
 
         {step === 2 && (
-          <section>
+          <section className="usw-step">
             <h1 ref={heading} tabIndex={-1} style={S.h1}>{t.occasion.title}</h1>
             <p style={S.sub}>{t.occasion.subtitle}</p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
               {t.occasion.list.map((o) => (
-                <button key={o} type="button" style={S.chip(form.occasion === o)} aria-pressed={form.occasion === o} onClick={() => set('occasion', o)}>{o}</button>
+                <button key={o} type="button" className={`usw-chip ${form.occasion === o ? 'on' : ''}`} aria-pressed={form.occasion === o} onClick={() => set('occasion', o)}>{o}</button>
               ))}
-              <button type="button" style={S.chip(form.occasion === '__other')} aria-pressed={form.occasion === '__other'} onClick={() => set('occasion', '__other')}>{t.occasion.other}</button>
+              <button type="button" className={`usw-chip ${form.occasion === '__other' ? 'on' : ''}`} aria-pressed={form.occasion === '__other'} onClick={() => set('occasion', '__other')}>{t.occasion.other}</button>
             </div>
             {form.occasion === '__other' && (
               <input aria-label={t.occasion.other} style={{ ...S.input, marginTop: '12px' }} maxLength={100} placeholder={t.occasion.otherPh} value={form.occasionOther} onChange={(e) => set('occasionOther', e.target.value)} />
@@ -286,7 +285,7 @@ export default function CreateWizard() {
         )}
 
         {step === 3 && (
-          <section>
+          <section className="usw-step">
             <h1 ref={heading} tabIndex={-1} style={S.h1}>{t.story.title(form.recipientName.trim())}</h1>
             <p style={S.sub}>{t.story.subtitle}</p>
             <textarea aria-label={t.story.title('')} style={{ ...S.input, minHeight: '220px', lineHeight: 1.5 }} maxLength={4000} placeholder={t.story.ph} value={form.story} onChange={(e) => set('story', e.target.value)} />
@@ -299,15 +298,18 @@ export default function CreateWizard() {
         )}
 
         {step === 4 && (
-          <section>
+          <section className="usw-step">
             <h1 ref={heading} tabIndex={-1} style={S.h1}>{t.sound.title}</h1>
             <p style={S.sub}>{t.sound.subtitle}</p>
-            <div style={{ ...S.grid, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+            <div className="usw-grid" style={{ ...S.grid, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
               {(country?.genres || []).map((g) => (
-                <button key={g.id} type="button" style={{ ...S.card(form.genre === g.id), alignItems: 'flex-start', textAlign: 'left', minHeight: '96px' }} aria-pressed={form.genre === g.id}
+                <button key={g.id} type="button" className={`usw-card usw-genre ${form.genre === g.id ? 'on' : ''}`} aria-pressed={form.genre === g.id}
                   onClick={() => { set('genre', g.id); if (!FAITH.test(`${g.id} ${g.name}`)) set('faithThemes', false); }}>
-                  <span>{g.name}</span>
-                  {g.description && <span style={{ fontWeight: 500, fontSize: '0.8rem', color: '#6b6474' }}>{g.description}</span>}
+                  <Icone3D src={iconeDoRitmo(g.id)} />
+                  <span className="usw-genre-txt">
+                    <span className="usw-lb">{g.name}</span>
+                    {g.description && <span className="usw-sub">{g.description}</span>}
+                  </span>
                 </button>
               ))}
             </div>
@@ -315,16 +317,16 @@ export default function CreateWizard() {
         )}
 
         {step === 5 && (
-          <section>
+          <section className="usw-step">
             <h1 ref={heading} tabIndex={-1} style={S.h1}>{t.vibe.title}</h1>
             <p style={S.sub}>{t.vibe.subtitle}</p>
             <p style={S.label}>{t.vibe.moodLabel}</p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-              {t.vibe.moods.map(([v, l]) => <button key={v} type="button" style={S.chip(form.mood === v)} aria-pressed={form.mood === v} onClick={() => set('mood', v)}>{l}</button>)}
+              {t.vibe.moods.map(([v, l]) => <button key={v} type="button" className={`usw-chip ${form.mood === v ? 'on' : ''}`} aria-pressed={form.mood === v} onClick={() => set('mood', v)}>{l}</button>)}
             </div>
             <p style={S.label}>{t.vibe.vocalsLabel}</p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-              {t.vibe.vocals.map(([v, l]) => <button key={v} type="button" style={S.chip(form.vocals === v)} aria-pressed={form.vocals === v} onClick={() => set('vocals', v)}>{l}</button>)}
+              {t.vibe.vocals.map(([v, l]) => <button key={v} type="button" className={`usw-chip ${form.vocals === v ? 'on' : ''}`} aria-pressed={form.vocals === v} onClick={() => set('vocals', v)}>{l}</button>)}
             </div>
             {faithAvailable && (
               <label style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', marginTop: '16px', fontSize: '0.92rem' }}>
@@ -336,7 +338,7 @@ export default function CreateWizard() {
         )}
 
         {step === 6 && (
-          <section>
+          <section className="usw-step">
             <h1 ref={heading} tabIndex={-1} style={S.h1}>{t.lyrics.title} ✨</h1>
             <p style={S.sub}>{t.lyrics.subtitle(form.recipientName.trim())}</p>
             <label style={S.label} htmlFor="wz-lyrics">{t.lyrics.label}</label>
@@ -348,7 +350,7 @@ export default function CreateWizard() {
         )}
 
         {step === 7 && (
-          <section>
+          <section className="usw-step">
             <h1 ref={heading} tabIndex={-1} style={S.h1}>{t.contact.title}</h1>
             <p style={S.sub}>{t.contact.subtitle}</p>
             <label style={S.label} htmlFor="wz-phone">{t.contact.phone}</label>
@@ -369,10 +371,10 @@ export default function CreateWizard() {
         {error && <p role="alert" style={S.error}>{error}</p>}
       </div>
 
-      <div style={S.bottom}>
+      <div className="usw-bottom">
         <div style={S.bottomIn}>
-          {step > 1 && <button type="button" style={S.back} onClick={() => ir(step - 1)} disabled={busy}>{t.back}</button>}
-          <button type="button" style={S.next(busy)} onClick={avancar} disabled={busy}>{rotuloAvancar}</button>
+          {step > 1 && <button type="button" className="usw-back" onClick={() => ir(step - 1)} disabled={busy}>{t.back}</button>}
+          <button type="button" className="usw-next" style={{ flex: 1, cursor: busy ? 'wait' : 'pointer' }} onClick={avancar} disabled={busy}>{rotuloAvancar}</button>
         </div>
       </div>
     </div>
