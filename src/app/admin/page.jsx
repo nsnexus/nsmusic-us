@@ -894,6 +894,8 @@ export default function AdminDashboard() {
                     router.push('/admin/anuncios');
                   } else if (val === 'CARTAS') {
                     router.push('/admin/cartas');
+                  } else if (val === 'PAISES') {
+                    router.push('/admin/paises');
                   } else {
                     setActiveTab(val);
                   }
@@ -917,6 +919,7 @@ export default function AdminDashboard() {
                 <option value="DASHBOARD">📊 Dashboard ➔</option>
                 <option value="ANUNCIOS">🎯 Anúncios (ROI/CPA) ➔</option>
                 <option value="CARTAS">💌 Temas da Carta ➔</option>
+                <option value="PAISES">🌎 Países e ritmos ➔</option>
                 <option value="LIMITES">🚦 Limites de Geração</option>
                 <option value="AJUSTES">⚙️ Ajustes Gerais</option>
               </select>
@@ -975,6 +978,9 @@ export default function AdminDashboard() {
               </Link>
               <Link href="/admin/cartas" style={{ ...styles.tabBtn, backgroundColor: '#e2e8f0', color: '#334155', textDecoration: 'none', display: 'inline-block' }}>
                 💌 Temas da Carta
+              </Link>
+              <Link href="/admin/paises" style={{ ...styles.tabBtn, backgroundColor: '#e2e8f0', color: '#334155', textDecoration: 'none', display: 'inline-block' }}>
+                🌎 Países e ritmos
               </Link>
               <button
                 onClick={() => setActiveTab('LIMITES')}

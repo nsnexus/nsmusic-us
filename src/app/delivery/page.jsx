@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Shell, RecordArt } from '@/components/us/Shell';
 import { US_PACKAGES, formatUsd } from '@/lib/usCatalog';
 import { trackFbPurchase } from '@/lib/metaPixel';
+import EmbeddedCheckout from '@/components/us/EmbeddedCheckout';
 
 async function api(url, body, signal) {
   const response = await fetch(url, {
@@ -38,7 +39,8 @@ export default function DeliveryPage() {
     [notice, setNotice] = useState(''),
     [run, setRun] = useState(0),
     [checkoutBusy, setCheckoutBusy] = useState(false),
-    [selectedSku, setSelectedSku] = useState('audio_only');
+    [selectedSku, setSelectedSku] = useState('audio_only'),
+    [embedded, setEmbedded] = useState(null);
 
   const checkoutController = useRef(null), mounted = useRef(true);
 
@@ -58,6 +60,13 @@ export default function DeliveryPage() {
     try {
       const chosenSku = targetSku || selectedSku || order?.sku || 'audio_only';
       const result = await api('/api/us/checkout', { orderId, sku: chosenSku }, checkoutController.current.signal);
+      if (result.embedded && result.clientSecret && result.publishableKey) {
+        if (mounted.current) {
+          setEmbedded({ clientSecret: result.clientSecret, publishableKey: result.publishableKey });
+          setCheckoutBusy(false);
+        }
+        return;
+      }
       const destination = new URL(result.checkoutUrl);
       if (destination.protocol !== 'https:') throw new Error('Secure checkout is unavailable. Please try again.');
       if (mounted.current) window.location.assign(destination.href);
@@ -317,6 +326,14 @@ export default function DeliveryPage() {
         </div>
         <RecordArt small />
       </main>
+      {embedded && (
+        <EmbeddedCheckout
+          clientSecret={embedded.clientSecret}
+          publishableKey={embedded.publishableKey}
+          language={order?.extras?.us?.spec?.language === 'es' ? 'es' : 'en'}
+          onClose={() => setEmbedded(null)}
+        />
+      )}
     </Shell>
   );
 }

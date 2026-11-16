@@ -23,21 +23,23 @@ export function Brand() {
   );
 }
 
-export function Shell({ children }) {
+export function Shell({ children, compact = false }) {
   return (
     <div className="us-site">
       <header className="us-header">
         <Brand />
-        <nav aria-label="Main navigation">
-          <Link href="/#how-it-works">The process</Link>
-          <Link href="/#collection">The collection</Link>
-          <Link className="us-nav-cta" href="/create">
-            Make their song <span>↗</span>
-          </Link>
-        </nav>
+        {!compact && (
+          <nav aria-label="Main navigation">
+            <Link href="/how-it-works#how-it-works">The process</Link>
+            <Link href="/how-it-works#collection">The collection</Link>
+            <Link className="us-nav-cta" href="/create">
+              Make their song <span>↗</span>
+            </Link>
+          </nav>
+        )}
       </header>
       {children}
-      <footer className="us-footer">
+      {!compact && <footer className="us-footer">
         <div>
           <Brand />
           <p>A little story. A lasting feeling.</p>
@@ -45,10 +47,9 @@ export function Shell({ children }) {
         <div className="us-footer-links">
           <Link href="/terms">Terms</Link>
           <Link href="/privacy">Privacy</Link>
-          <Link href="/admin">Studio access</Link>
           <span>© {new Date().getFullYear()} NS Music</span>
         </div>
-      </footer>
+      </footer>}
     </div>
   );
 }
