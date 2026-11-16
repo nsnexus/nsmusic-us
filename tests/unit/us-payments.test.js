@@ -17,3 +17,21 @@ describe('US fixed-price Stripe payments',()=>{
  it('requeries Stripe before invoking atomic fulfillment',async()=>{expect(await fulfillUsSession(record.id,id,{STRIPE_SECRET_KEY:'test-key'})).toBe(true);expect(fetch.mock.calls[0][0]).toBe('https://api.stripe.com/v1/checkout/sessions/cs_test_order');expect(mocks.rpc).toHaveBeenCalledWith('us_fulfill_checkout',{p_session_id:record.id,p_payment_intent:'pi_test_order'});});
  it('fails closed when Stripe cannot confirm',async()=>{fetch.mockResolvedValueOnce(new Response('{}',{status:503}));await expect(fulfillUsSession(record.id,id,{STRIPE_SECRET_KEY:'test-key'})).rejects.toMatchObject({status:502});expect(mocks.rpc).not.toHaveBeenCalled();});
 });
+
+import { createUsCheckout as criarCheckoutComVersao, STRIPE_API_VERSION } from '../../src/lib/usStripe.js';
+import { vi as viVersao } from 'vitest';
+
+describe('versão da API da Stripe', () => {
+  it('toda chamada à Stripe leva a versão fixada e o erro mostra só o código', async () => {
+    const chamadas = [];
+    viVersao.stubGlobal('fetch', viVersao.fn(async (url, init) => {
+      chamadas.push(init.headers);
+      return { ok: false, status: 400, json: async () => ({ error: { type: 'invalid_request_error', code: 'parameter_invalid_empty', message: 'segredo interno' } }) };
+    }));
+    const env = { STRIPE_SECRET_KEY: 'sk_test_x', NEXT_PUBLIC_SITE_URL: 'https://us.nsmusic.ia.br', STRIPE_PUBLISHABLE_KEY: 'pk_test_abc' };
+    await expect(criarCheckoutComVersao({ id: '11111111-1111-4111-8111-111111111111', extras: {} }, 'audio_only', env))
+      .rejects.toThrow(/code: parameter_invalid_empty/);
+    expect(chamadas[0]['Stripe-Version']).toBe(STRIPE_API_VERSION);
+    viVersao.unstubAllGlobals();
+  });
+});
