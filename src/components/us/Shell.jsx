@@ -23,32 +23,39 @@ export function Brand() {
   );
 }
 
-export function Shell({ children }) {
+const SHELL_T = {
+  en: { process: 'The process', collection: 'The collection', cta: 'Make their song', tagline: 'A little story. A lasting feeling.', terms: 'Terms', privacy: 'Privacy' },
+  es: { process: 'Cómo funciona', collection: 'Los paquetes', cta: 'Crea su canción', tagline: 'Una pequeña historia. Un sentimiento que dura.', terms: 'Términos', privacy: 'Privacidad' },
+};
+
+export function Shell({ children, compact = false, lang = 'en' }) {
+  const t = SHELL_T[lang] || SHELL_T.en;
   return (
     <div className="us-site">
       <header className="us-header">
         <Brand />
-        <nav aria-label="Main navigation">
-          <Link href="/#how-it-works">The process</Link>
-          <Link href="/#collection">The collection</Link>
-          <Link className="us-nav-cta" href="/create">
-            Make their song <span>↗</span>
-          </Link>
-        </nav>
+        {!compact && (
+          <nav aria-label="Main navigation">
+            <Link href="/how-it-works#how-it-works">{t.process}</Link>
+            <Link href="/how-it-works#collection">{t.collection}</Link>
+            <Link className="us-nav-cta" href="/create">
+              {t.cta} <span>↗</span>
+            </Link>
+          </nav>
+        )}
       </header>
       {children}
-      <footer className="us-footer">
+      {!compact && <footer className="us-footer">
         <div>
           <Brand />
-          <p>A little story. A lasting feeling.</p>
+          <p>{t.tagline}</p>
         </div>
         <div className="us-footer-links">
-          <Link href="/terms">Terms</Link>
-          <Link href="/privacy">Privacy</Link>
-          <Link href="/admin">Studio access</Link>
+          <Link href="/terms">{t.terms}</Link>
+          <Link href="/privacy">{t.privacy}</Link>
           <span>© {new Date().getFullYear()} NS Music</span>
         </div>
-      </footer>
+      </footer>}
     </div>
   );
 }

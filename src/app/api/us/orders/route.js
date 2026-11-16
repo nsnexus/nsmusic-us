@@ -2,13 +2,15 @@ import { NextResponse } from 'next/server';
 import { getUsEnv, usDatabase, usHash, usCookieName, requireOwnedUsOrder, publicUsOrder } from '@/lib/usOrders';
 import { validateUsSpec, readUsJson } from '@/lib/usGeneration';
 import { getUsPackage } from '@/lib/usCatalog';
+import { loadCountries } from '@/lib/usCountries';
+import { getSupabaseEdge } from '@/lib/supabase-edge';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(req) {
   try {
     const body = await readUsJson(req);
-    const spec = validateUsSpec(body);
+    const spec = validateUsSpec(body, await loadCountries(getSupabaseEdge(getUsEnv())));
     const pack = getUsPackage(body.sku || 'audio_only');
     if (!pack || typeof body.lyrics !== 'string' || body.lyrics.trim().length < 80 || body.lyrics.length > 4500) {
       return NextResponse.json({ error: 'Please use 80–4,500 characters of lyrics.' }, { status: 400 });
