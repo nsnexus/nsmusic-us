@@ -1,0 +1,357 @@
+/* Visual do passo a passo da loja internacional (mesmo do /criar do Brasil). */
+/* Cartão de escolha: papel branco, borda fina, sombra em camadas. Selecionado ganha borda da marca,
+   fundo levemente tingido, selo de check e o ícone dá um "pulinho". */
+.usw-card {
+  --usw-ring: #6d28d9;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 0.18rem;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(30, 27, 75, 0.09);
+  border-radius: 18px;
+  padding: 0.95rem 0.6rem 0.85rem;
+  cursor: pointer;
+  transition:
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.2s ease,
+    background-color 0.2s ease;
+  min-height: 5.6rem;
+  position: relative;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  width: 100%;
+  box-sizing: border-box;
+  box-shadow:
+    0 1px 1px rgba(30, 27, 75, 0.03),
+    0 2px 6px rgba(30, 27, 75, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  animation: usw-entrada 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.usw-grid > .usw-card:nth-child(1) { animation-delay: 0.02s; }
+.usw-grid > .usw-card:nth-child(2) { animation-delay: 0.05s; }
+.usw-grid > .usw-card:nth-child(3) { animation-delay: 0.08s; }
+.usw-grid > .usw-card:nth-child(4) { animation-delay: 0.11s; }
+.usw-grid > .usw-card:nth-child(5) { animation-delay: 0.14s; }
+.usw-grid > .usw-card:nth-child(6) { animation-delay: 0.17s; }
+.usw-grid > .usw-card:nth-child(7) { animation-delay: 0.2s; }
+.usw-grid > .usw-card:nth-child(8) { animation-delay: 0.23s; }
+.usw-grid > .usw-card:nth-child(n + 9) { animation-delay: 0.26s; }
+
+@media (hover: hover) {
+  .usw-card:hover {
+    transform: translateY(-3px);
+    border-color: rgba(109, 92, 232, 0.35);
+    box-shadow:
+      0 2px 4px rgba(30, 27, 75, 0.04),
+      0 12px 28px -8px rgba(76, 61, 190, 0.22);
+  }
+
+  .usw-card:hover .usw-ic {
+    transform: translateY(-2px) rotate(-4deg) scale(1.06);
+  }
+}
+
+.usw-card:active {
+  transform: scale(0.97);
+  transition-duration: 0.12s;
+}
+
+.usw-card.on {
+  background: linear-gradient(180deg, #ffffff 0%, #f5f2ff 100%) !important;
+  border-color: var(--usw-ring) !important;
+  box-shadow:
+    0 0 0 1px var(--usw-ring),
+    0 14px 30px -10px rgba(76, 61, 190, 0.38) !important;
+}
+
+/* Selo de check no canto do cartão escolhido. */
+.usw-card::after {
+  content: '';
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 50%;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 8.5l2.6 2.5L12 5.5'/%3E%3C/svg%3E") center / 72% no-repeat,
+    var(--usw-ring);
+  box-shadow: 0 3px 8px rgba(76, 61, 190, 0.35);
+  transform: scale(0);
+  opacity: 0;
+  transition: transform 0.32s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s ease;
+}
+
+.usw-card.on::after {
+  transform: scale(1);
+  opacity: 1;
+}
+
+.usw-card.on .usw-ic {
+  animation: usw-pulinho 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.usw-card.on .usw-lb {
+  color: #4c1d95 !important;
+}
+
+.usw-card.on .usw-sub {
+  color: #6d28d9 !important;
+  opacity: 1 !important;
+}
+
+.usw-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.6rem;
+  line-height: 1;
+  margin-bottom: 0.3rem;
+  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.usw-ic img {
+  display: block;
+  width: 2.75rem;
+  height: 2.75rem;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 6px rgba(30, 27, 75, 0.14));
+}
+
+.usw-lb {
+  font-family: var(--font-family-title, inherit);
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: #1e1b3a;
+  line-height: 1.25;
+  letter-spacing: -0.005em;
+}
+
+.usw-sub {
+  font-size: 0.72rem;
+  color: #6b6880;
+  line-height: 1.25;
+}
+
+@keyframes usw-entrada {
+  from { opacity: 0; transform: translateY(10px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes usw-pulinho {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.22) rotate(-6deg); }
+  70% { transform: scale(0.95) rotate(2deg); }
+  100% { transform: scale(1); }
+}
+
+/* Cada etapa entra com um leve deslize; o `key` da etapa no /criar remonta o bloco. */
+.usw-step {
+  animation: usw-etapa 0.38s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes usw-etapa {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Fundo da criação: papel claro com três luzes suaves (lilás, pêssego e menta) que se mexem
+   devagar. Fica atrás de tudo e não recebe clique. */
+.usw-amb {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 1px 1px, rgba(30, 27, 75, 0.045) 1px, transparent 0) 0 0 / 22px 22px,
+    linear-gradient(180deg, #fbfaff 0%, #faf8f5 55%, #fdf9f6 100%);
+}
+
+.usw-amb::before,
+.usw-amb::after,
+.usw-amb span {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(70px);
+  opacity: 0.55;
+  will-change: transform;
+}
+
+.usw-amb::before {
+  width: 30rem;
+  height: 30rem;
+  top: -10rem;
+  left: -8rem;
+  background: #d9d0ff;
+  animation: usw-luz-a 22s ease-in-out infinite alternate;
+}
+
+.usw-amb::after {
+  width: 26rem;
+  height: 26rem;
+  top: 20%;
+  right: -10rem;
+  background: #ffd9c7;
+  animation: usw-luz-b 26s ease-in-out infinite alternate;
+}
+
+.usw-amb span {
+  width: 22rem;
+  height: 22rem;
+  bottom: -8rem;
+  left: 20%;
+  background: #cff5e6;
+  opacity: 0.45;
+  animation: usw-luz-a 30s ease-in-out infinite alternate-reverse;
+}
+
+@keyframes usw-luz-a {
+  to { transform: translate(4rem, 3rem) scale(1.08); }
+}
+
+@keyframes usw-luz-b {
+  to { transform: translate(-3rem, 4rem) scale(1.1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .usw-card,
+  .usw-step,
+  .usw-card.on .usw-ic,
+  .usw-amb::before,
+  .usw-amb::after,
+  .usw-amb span {
+    animation: none !important;
+  }
+
+  .usw-card,
+  .usw-ic,
+  .usw-card::after {
+    transition: none !important;
+  }
+}
+
+.usw-next {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  background: linear-gradient(180deg, #7465f0 0%, #5a46e0 55%, #4d36cf 100%);
+  color: #ffffff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    inset 0 -2px 0 rgba(30, 16, 110, 0.25),
+    0 10px 24px -8px rgba(77, 54, 207, 0.6);
+  border-radius: 100px;
+  padding: 0.88rem 1.4rem;
+  font-family: var(--font-family-title, inherit);
+  font-weight: 700;
+  font-size: 0.97rem;
+  letter-spacing: 0.005em;
+  border: none;
+  cursor: pointer;
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.22s ease, filter 0.2s ease;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+/* Brilho que atravessa o botão no hover. */
+.usw-next::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(110deg, transparent 30%, rgba(255, 255, 255, 0.28) 50%, transparent 70%);
+  transform: translateX(-120%);
+  transition: transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (hover: hover) {
+  .usw-next:hover {
+    transform: translateY(-1px);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.3),
+      inset 0 -2px 0 rgba(30, 16, 110, 0.25),
+      0 16px 30px -10px rgba(77, 54, 207, 0.7);
+  }
+
+  .usw-next:hover::before {
+    transform: translateX(120%);
+  }
+}
+
+.usw-next:active {
+  transform: scale(0.98);
+}
+
+.usw-next:disabled {
+  filter: saturate(0.4);
+  opacity: 0.7;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.usw-card { color: #1f1a24; font-weight: 700; font-size: 0.92rem; }
+.usw-genre { align-items: flex-start; text-align: left; min-height: 6rem; padding: 0.85rem 0.9rem; flex-direction: row; gap: 0.7rem; justify-content: flex-start; }
+.usw-genre .usw-ic { margin: 0; flex-shrink: 0; }
+.usw-genre .usw-ic img { width: 2.3rem; height: 2.3rem; }
+.usw-genre-txt { display: flex; flex-direction: column; gap: 0.15rem; padding-right: 1rem; }
+
+.usw-chip {
+  padding: 0.62rem 0.95rem;
+  border-radius: 999px;
+  cursor: pointer;
+  border: 1px solid rgba(30, 27, 75, 0.12);
+  background: rgba(255, 255, 255, 0.92);
+  color: #1f1a24;
+  font-weight: 700;
+  font-size: 0.9rem;
+  box-shadow: 0 1px 2px rgba(30, 27, 75, 0.04);
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.22s ease, color 0.2s ease;
+}
+@media (hover: hover) {
+  .usw-chip:hover { transform: translateY(-1px); border-color: rgba(109, 40, 217, 0.35); }
+}
+.usw-chip:active { transform: scale(0.97); }
+.usw-chip.on {
+  border-color: #6d28d9;
+  background: #f5f3ff;
+  color: #4c1d95;
+  box-shadow: 0 0 0 1px #6d28d9, 0 8px 18px -8px rgba(109, 40, 217, 0.45);
+}
+
+.usw-back {
+  flex: 0 0 auto;
+  padding: 0.85rem 1.1rem;
+  border-radius: 999px;
+  border: 1px solid rgba(30, 27, 75, 0.14);
+  background: rgba(255, 255, 255, 0.9);
+  font-weight: 700;
+  font-size: 0.98rem;
+  cursor: pointer;
+  color: #3f3a57;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+.usw-back:hover { border-color: rgba(30, 27, 75, 0.3); background: #fff; }
+
+.usw-bottom {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border-top: 1px solid rgba(30, 27, 75, 0.08);
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .usw-chip, .usw-next, .usw-next::before { transition: none !important; }
+}
