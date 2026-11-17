@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
+import { Sparkles } from 'lucide-react';
 import Link from 'next/link';
 import { PHONE_PREFIX } from '@/lib/usI18n';
 import { iconeDoRitmo } from '@/lib/icones3d';
@@ -154,6 +155,9 @@ export default function CriarFlow() {
     return () => { ativo = false; };
   }, [restored]);
 
+  const [storyBusy, setStoryBusy] = useState(false);
+  const [storyError, setStoryError] = useState('');
+
   const set = useCallback((k, v) => {
     setForm((f) => ({ ...f, [k]: v }));
     if (!['customerEmail', 'customerPhone', 'termsAccepted'].includes(k)) setOrderId('');
@@ -196,7 +200,7 @@ export default function CriarFlow() {
     if (step === 1) return !relationship || !recipientName.trim() || !form.senderName.trim() || !form.occasion.trim();
     if (step === 2) return form.story.trim().length < STORY_MIN;
     if (step === 3) return !form.genre || !form.mood || !form.vocals;
-    if (step === 4) return form.customerPhone.replace(/\D/g, '').length < 8 || !form.termsAccepted;
+    if (step === 4) return form.customerPhone.replace(/\D/g, '').length < 8;
     if (step === 5) return lyricsStatus !== 'ready' || lyrics.trim().length < LYRICS_MIN;
     return false;
   };
@@ -242,7 +246,6 @@ export default function CriarFlow() {
   const avancar = () => {
     if (faltando()) {
       setShowValidation(true);
-      if (step === 4 && !form.termsAccepted && form.customerPhone.replace(/\D/g, '').length >= 8) setError(t.s4.termsMissing);
       setTimeout(() => {
         const el = document.querySelector('[data-missing="true"]');
         if (el) {
@@ -386,6 +389,13 @@ export default function CriarFlow() {
   );
 
   const storyLen = form.story.trim().length;
+  const sugerirHistoria = async () => {
+    setStoryBusy(true); setStoryError('');
+    try {
+      const d = await post('/api/us/story-suggestion', { country: form.country, language: lang, recipientName: recipientName.trim(), senderName: form.senderName.trim(), relationship, occasion: form.occasion.trim() }, undefined, t.s2.aiError);
+      if (d.suggestion) set('story', d.suggestion); else setStoryError(t.s2.aiError);
+    } catch { setStoryError(t.s2.aiError); } finally { setStoryBusy(false); }
+  };
   const etapa2 = (
     <section className="nx-form-column" style={{ width: '100%', maxWidth: '34rem', margin: '0 auto' }}>
       <h1 className="wz-t" style={{ margin: 0 }}>{t.s2.title}</h1>
@@ -396,6 +406,13 @@ export default function CriarFlow() {
           <span style={{ fontSize: '0.78rem', color: storyLen >= STORY_MIN ? '#16a34a' : '#857D80', fontWeight: 600 }}>{t.s2.count(storyLen)}</span>
           {v && storyLen < STORY_MIN && <span style={missingTag}>● {t.s2.missing}</span>}
         </div>
+      </div>
+      <div style={{ marginTop: '14px' }}>
+        <button type="button" onClick={sugerirHistoria} disabled={storyBusy} style={{ width: '100%', minHeight: '48px', padding: '12px 18px', borderRadius: '100px', border: '1.5px solid #c7d2fe', background: 'linear-gradient(135deg, #eef2ff 0%, #ede9fe 100%)', color: '#4338ca', fontSize: '0.92rem', fontWeight: 700, cursor: storyBusy ? 'wait' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px', boxShadow: '0 2px 10px rgba(79, 70, 229, 0.08)', opacity: storyBusy ? 0.75 : 1 }}>
+          <Sparkles size={18} style={{ color: '#6366f1', flexShrink: 0 }} />
+          <span>{storyBusy ? t.s2.aiBusy : t.s2.ai}</span>
+        </button>
+        {storyError && <div role="alert" style={{ fontSize: '0.78rem', color: '#dc2626', marginTop: '6px', textAlign: 'center' }}>{storyError}</div>}
       </div>
       <div style={{ marginTop: '1.2rem' }}>
         <label htmlFor="wz-nomes" style={labelStyle}>{t.s2.names}</label>
@@ -496,10 +513,8 @@ export default function CriarFlow() {
         <input id="wz-email" type="email" autoComplete="email" className="wz-inp" value={form.customerEmail} onChange={(e) => set('customerEmail', e.target.value)} placeholder={t.s4.emailPh} maxLength={200} />
       </div>
 
-      <label data-missing={v && !form.termsAccepted ? 'true' : undefined} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', fontSize: '0.84rem', color: '#475569', lineHeight: 1.5, cursor: 'pointer', padding: v && !form.termsAccepted ? '8px 10px' : 0, borderRadius: '10px', border: v && !form.termsAccepted ? '1.5px solid #dc2626' : 'none' }}>
-        <input type="checkbox" checked={form.termsAccepted} onChange={(e) => set('termsAccepted', e.target.checked)} style={{ width: '18px', height: '18px', marginTop: '2px', accentColor: '#4f46e5', flexShrink: 0 }} />
-        <span style={{ fontWeight: 400 }}>{t.s4.terms}</span>
-      </label>
+      {/* Aceite implícito: continuar já vale como aceite (sem caixinha para marcar). */}
+      <p style={{ fontSize: '0.8rem', color: '#64748b', lineHeight: 1.5, margin: 0 }}>{t.s4.terms}</p>
     </section>
   );
 

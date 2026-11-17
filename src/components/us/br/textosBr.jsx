@@ -87,6 +87,7 @@ export const TEXTOS_BR = {
       count: (n) => `${n} characters · minimum 50`, missing: 'Write at least 50 characters',
       names: 'Names that must appear (optional)', namesPh: 'e.g. kids’ names, pet’s name',
       phrase: 'A phrase you want in the song (optional)', phrasePh: 'e.g. “You are my sunshine”',
+      ai: 'Suggest a story with AI', aiBusy: 'Writing your story…', aiError: 'We couldn’t create a suggestion right now. Please try again.',
     },
     s3: {
       genreTitle: 'Music style', genreSub: 'The style sets the melody and the emotion.', genrePick: 'Choose a style',
@@ -101,7 +102,7 @@ export const TEXTOS_BR = {
       phoneLabel: 'Your WhatsApp to receive the link *', phoneSub: 'We’ll send a secure link so you can listen to the preview and download your song anytime.',
       phonePh: 'Your number', phoneMissing: 'Please enter your WhatsApp number.',
       emailLabel: 'Email (optional)', emailPh: 'you@email.com',
-      terms: <>I agree to the <a href="/terms" target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'underline' }}>Terms</a> and <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'underline' }}>Privacy Policy</a>. I’ll review the lyrics before the song is recorded.</>,
+      terms: <>By continuing, you agree to our <a href="/terms" target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'underline' }}>Terms</a> and <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'underline' }}>Privacy Policy</a>. You’ll review the lyrics before the song is recorded.</>,
       termsMissing: 'Please accept the terms to continue.',
     },
     s5: {
@@ -143,6 +144,7 @@ export const TEXTOS_BR = {
       count: (n) => `${n} caracteres · mínimo 50`, missing: 'Escribe al menos 50 caracteres',
       names: 'Nombres que deben aparecer (opcional)', namesPh: 'Ej.: nombres de los hijos, de la mascota',
       phrase: 'Una frase que quieras en la canción (opcional)', phrasePh: 'Ej.: “Eres mi sol”',
+      ai: 'Sugerir historia con IA', aiBusy: 'Escribiendo tu historia…', aiError: 'No pudimos crear una sugerencia ahora. Intenta de nuevo.',
     },
     s3: {
       genreTitle: 'Ritmo', genreSub: 'El ritmo define la melodía y la emoción.', genrePick: 'Elige un ritmo',
@@ -157,7 +159,7 @@ export const TEXTOS_BR = {
       phoneLabel: 'Tu WhatsApp para recibir el enlace *', phoneSub: 'Te enviamos un enlace seguro para escuchar el adelanto y descargar tu canción cuando quieras.',
       phonePh: 'Tu número', phoneMissing: 'Escribe tu número de WhatsApp.',
       emailLabel: 'Correo (opcional)', emailPh: 'tu@correo.com',
-      terms: <>Acepto los <a href="/terms" target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'underline' }}>Términos</a> y la <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'underline' }}>Privacidad</a>. Revisaré la letra antes de grabar la canción.</>,
+      terms: <>Al continuar, aceptas los <a href="/terms" target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'underline' }}>Términos</a> y la <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'underline' }}>Privacidad</a>. Revisarás la letra antes de grabar la canción.</>,
       termsMissing: 'Acepta los términos para continuar.',
     },
     s5: {
