@@ -7,7 +7,22 @@ import { loadCountries, saveCountries, DEFAULT_COUNTRIES } from '@/lib/usCountri
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+// O painel brasileiro (nsmusic.ia.br/admin → Países EUA) edita esta lista servidor-a-servidor com a
+// chave US_PANEL_TOKEN (mesmo valor nos dois Workers). Os bancos continuam separados.
+function iguais(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return d === 0;
+}
+
+function tokenDoPainelBr(req, env) {
+  const esperado = String(env.US_PANEL_TOKEN || '').trim();
+  return esperado.length >= 32 && iguais(String(req.headers.get('x-panel-token') || '').trim(), esperado);
+}
+
 async function autorizar(req, env) {
+  if (tokenDoPainelBr(req, env)) return null;
   const admin = await requireAdmin(req, env);
   return admin.ok ? null : NextResponse.json({ error: admin.error || 'Acesso restrito.' }, { status: admin.status || 401 });
 }
